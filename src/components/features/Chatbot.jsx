@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Sparkles, RefreshCw, Send, BookOpen, ShieldAlert, BrainCircuit, Bot, Info
+  Sparkles, RefreshCw, Send, BookOpen, ShieldAlert, BrainCircuit, Bot
 } from 'lucide-react';
-// Linked to your perfected supabaseClient.js
-import { ClinicalService } from "../../lib/supabaseClient"; 
+// IMPORTANT FIX: Importing from the new separated Service file
+import { ClinicalService } from "../../lib/supabaseService"; 
 import Card from '../common/Card';
 
 const Chatbot = ({ setView, userId }) => {
@@ -166,7 +166,7 @@ const Chatbot = ({ setView, userId }) => {
           </div>
           <button 
             onClick={() => setMessages([{ id: 1, sender: 'bot', text: "Let's start fresh. How can I help?" }])} 
-            className="text-stone-400 hover:text-stone-700 p-2 bg-stone-50 rounded-full"
+            className="text-stone-400 hover:text-stone-700 p-2 bg-stone-50 hover:bg-stone-100 transition-colors rounded-full"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -198,7 +198,7 @@ const Chatbot = ({ setView, userId }) => {
         </div>
 
         <div className="p-6 bg-white border-t border-stone-100">
-          <div className="max-w-4xl mx-auto flex items-center bg-stone-50 rounded-full border border-stone-200 p-2 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500/10 transition-all">
+          <div className="max-w-4xl mx-auto flex items-center bg-stone-50 rounded-full border border-stone-200 p-2 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500/20 transition-all">
             <input
               type="text"
               value={input}
@@ -223,7 +223,7 @@ const Chatbot = ({ setView, userId }) => {
 
 const TypingIndicator = () => (
   <div className="flex justify-start items-center gap-2 pl-2">
-    <div className="bg-white px-4 py-3 rounded-2xl border border-stone-100 shadow-sm flex gap-1">
+    <div className="bg-white px-4 py-3 rounded-2xl rounded-bl-none border border-stone-100 shadow-sm flex gap-1">
       {[0, 0.1, 0.2].map((d) => (
         <motion.div
           key={d}
@@ -236,4 +236,4 @@ const TypingIndicator = () => (
   </div>
 );
 
-export default Chatbot;   
+export default Chatbot;
