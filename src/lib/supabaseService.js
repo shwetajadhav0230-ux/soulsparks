@@ -79,7 +79,74 @@ export class ClinicalService {
    */
 
   /**
-   * The "Brain": Processes user state and returns structured JSON instructions.
+   * General Wellness AI Chat (Context-Aware)
+   */
+  static async processGeneralChat(userMessage, chatHistory, userId) {
+    if (!aiApiKey) throw new Error("Missing VITE_AI_API_KEY in .env file.");
+
+    // 1. Fetch the user's recent therapy outcomes to give the AI context
+    let therapyContext = "No recent therapy exercises completed.";
+    if (userId) {
+      const { data: recentLogs, error } = await supabase
+        .from('user_progress')
+        .select('activity_id, user_data, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (!error && recentLogs && recentLogs.length > 0) {
+        therapyContext = JSON.stringify(recentLogs);
+      }
+    }
+
+    // 2. Build the System Prompt
+    const SYSTEM_PROMPT = `
+      You are SoulSpark, an empathetic, conversational AI wellness companion.
+      
+      Here is the user's recent therapy data (CBT, DBT, ACT exercises):
+      ${therapyContext}
+
+      Rules:
+      1. Be warm, brief, and conversational.
+      2. If they are struggling, gently remind them of a tool they successfully used in the data above (e.g., their ACT values, a DBT TIPP skill, or a CBT reframe).
+      3. Do not sound like a robot reading a database. Say things like, "I remember you practiced..."
+      4. If they mention self-harm, tell them to click the red Crisis Support button immediately.
+    `;
+
+    // 3. Format history for Gemini API
+    const formattedHistory = chatHistory
+      .filter(msg => msg.id !== 1) // Optional: filter out the initial greeting if you want to save tokens
+      .map(msg => ({
+        role: msg.sender === 'bot' ? 'model' : 'user',
+        parts: [{ text: msg.text }]
+      }));
+
+    // Add current user message
+    formattedHistory.push({ role: 'user', parts: [{ text: userMessage }] });
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${aiApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: formattedHistory
+        })
+      });
+
+      if (!response.ok) throw new Error("AI API Request Failed");
+
+      const result = await response.json();
+      return result.candidates[0].content.parts[0].text;
+
+    } catch (err) {
+      console.error("General AI Error:", err);
+      return "I'm having a little trouble thinking right now. Could we take a deep breath and try again?";
+    }
+  }
+
+  /**
+   * The "Brain": Processes user state and returns structured JSON instructions for CBT.
    */
   static async processCBTInteraction(sessionState) {
     if (!aiApiKey) throw new Error("Missing VITE_AI_API_KEY in .env file.");
@@ -132,9 +199,10 @@ export class ClinicalService {
 
   /**
    * Reframes a specific thought using AI.
-   * Upgraded from simulation to use the Gemini engine.
    */
   static async generateAIReframe(automaticThought) {
+    if (!aiApiKey) throw new Error("Missing VITE_AI_API_KEY in .env file.");
+    
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${aiApiKey}`, {
         method: 'POST',
