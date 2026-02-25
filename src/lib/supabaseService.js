@@ -5,18 +5,11 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const aiApiKey = import.meta.env.VITE_AI_API_KEY;
 
-if (!supabaseUrl || !supabaseKey) {
-  console.warn('Supabase environment variables are missing! Check your .env file.');
-}
+// REMOVE THE LINE: import { ClinicalService } from "..."; 
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
-/**
- * ClinicalService
- * A unified controller for Supabase database operations and Gemini AI logic.
- */
-export class ClinicalService {
-
+export class ClinicalService{
   /**
    * ====================================================
    * 1. CORE CLINICAL CONTENT (Modules, Units, Activities)
@@ -79,12 +72,12 @@ export class ClinicalService {
    */
 
   /**
-   * General Wellness AI Chat (Context-Aware)
+   * General Wellness AI Chat (Context-Aware & Formatted)
    */
   static async processGeneralChat(userMessage, chatHistory, userId) {
     if (!aiApiKey) throw new Error("Missing VITE_AI_API_KEY in .env file.");
 
-    // 1. Fetch the user's recent therapy outcomes to give the AI context
+    // 1. Fetch user context
     let therapyContext = "No recent therapy exercises completed.";
     if (userId) {
       const { data: recentLogs, error } = await supabase
@@ -99,29 +92,30 @@ export class ClinicalService {
       }
     }
 
-    // 2. Build the System Prompt
+    // 2. Build the Advanced System Prompt
     const SYSTEM_PROMPT = `
-      You are SoulSpark, an empathetic, conversational AI wellness companion.
+      You are SoulSpark, a premium, empathetic AI wellness companion. You are deeply validating, warm, and highly insightful.
       
-      Here is the user's recent therapy data (CBT, DBT, ACT exercises):
+      Therapeutic Context (User's past exercises):
       ${therapyContext}
 
-      Rules:
-      1. Be warm, brief, and conversational.
-      2. If they are struggling, gently remind them of a tool they successfully used in the data above (e.g., their ACT values, a DBT TIPP skill, or a CBT reframe).
-      3. Do not sound like a robot reading a database. Say things like, "I remember you practiced..."
-      4. If they mention self-harm, tell them to click the red Crisis Support button immediately.
+      Response Guidelines:
+      1. Tone: Deeply empathetic and conversational. Speak like a wise, supportive guide.
+      2. Formatting: You MUST use **bold text** to emphasize key emotions, concepts, or tool names. Break your response into 2 or 3 short paragraphs.
+      3. Contextual Memory: Weave their past successes into your response naturally. Mention specific skills like **TIPP**, **Reframing**, or their **Core Values**.
+      4. Actionable Engagement: ALWAYS end your response with ONE gentle, guiding question.
+      5. Module Suggestions: If appropriate, suggest a specific module (CBT, DBT, or ACT).
+      6. Crisis Protocol: If self-harm is mentioned, instruct them to click the red "Crisis Support" button immediately.
     `;
 
-    // 3. Format history for Gemini API
+    // 3. Format history for Gemini
     const formattedHistory = chatHistory
-      .filter(msg => msg.id !== 1) // Optional: filter out the initial greeting if you want to save tokens
+      .filter(msg => msg.id !== 1)
       .map(msg => ({
         role: msg.sender === 'bot' ? 'model' : 'user',
         parts: [{ text: msg.text }]
       }));
 
-    // Add current user message
     formattedHistory.push({ role: 'user', parts: [{ text: userMessage }] });
 
     try {
@@ -135,34 +129,26 @@ export class ClinicalService {
       });
 
       if (!response.ok) throw new Error("AI API Request Failed");
-
       const result = await response.json();
       return result.candidates[0].content.parts[0].text;
-
     } catch (err) {
       console.error("General AI Error:", err);
-      return "I'm having a little trouble thinking right now. Could we take a deep breath and try again?";
+      return "I'm having a little trouble thinking right now. Could we take a **deep breath** and try again?";
     }
   }
 
   /**
-   * The "Brain": Processes user state and returns structured JSON instructions for CBT.
+   * Structured CBT Brain
    */
   static async processCBTInteraction(sessionState) {
-    if (!aiApiKey) throw new Error("Missing VITE_AI_API_KEY in .env file.");
+    if (!aiApiKey) throw new Error("Missing VITE_AI_API_KEY.");
 
     const SYSTEM_PROMPT = `
-      You are an empathetic, structured CBT Assistant. 
-      Respond ONLY in JSON.
+      You are an empathetic, structured CBT Assistant. Respond ONLY in JSON.
       
       ### Safety Protocol
-      If risk of self-harm/harm to others is detected: 
-      "safety_flag": true, "risk_level": "CRITICAL", "response_text": [Emergency Hotlines].
+      If risk is detected: "safety_flag": true, "risk_level": "CRITICAL", "response_text": [Hotlines].
 
-      ### Phase Guidance
-      1. Intake: Build rapport, explain CBT, set goals.
-      2. Core: Identify situations, build awareness, recognize distortions, challenge thoughts.
-      
       ### Schema
       {
         "response_text": "string",
@@ -186,11 +172,8 @@ export class ClinicalService {
         })
       });
 
-      if (!response.ok) throw new Error("AI API Request Failed");
-
       const result = await response.json();
       return JSON.parse(result.candidates[0].content.parts[0].text);
-
     } catch (err) {
       console.error("CBT AI Error:", err);
       return this._getFallbackResponse(sessionState.current_cbt_step);
@@ -198,10 +181,10 @@ export class ClinicalService {
   }
 
   /**
-   * Reframes a specific thought using AI.
+   * Generate AI-driven reframes
    */
   static async generateAIReframe(automaticThought) {
-    if (!aiApiKey) throw new Error("Missing VITE_AI_API_KEY in .env file.");
+    if (!aiApiKey) throw new Error("Missing VITE_AI_API_KEY.");
     
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${aiApiKey}`, {
@@ -210,7 +193,7 @@ export class ClinicalService {
         body: JSON.stringify({
           contents: [{ 
             role: "user", 
-            parts: [{ text: `Provide 3 short, helpful CBT reframes for this thought: "${automaticThought}". Return as a JSON array of strings.` }] 
+            parts: [{ text: `Provide 3 short, helpful CBT reframes for: "${automaticThought}". Return as a JSON array of strings.` }] 
           }],
           generationConfig: { response_mime_type: "application/json" }
         })
@@ -218,14 +201,13 @@ export class ClinicalService {
       const result = await response.json();
       return JSON.parse(result.candidates[0].content.parts[0].text);
     } catch (err) {
-      console.error("Reframe Error:", err);
-      return ["I might be looking at this from one perspective. What's another way to see it?", "I can handle this challenge one step at a time."];
+      return ["Let's try to look at this from another angle.", "What is one small step I can take?"];
     }
   }
 
   /**
    * ====================================================
-   * 3. DAILY WELLNESS & DASHBOARD
+   * 3. WELLNESS & DASHBOARD LOGIC
    * ====================================================
    */
 
@@ -259,18 +241,9 @@ export class ClinicalService {
 
   static async getFullDashboardStats(userId) {
     const { data, error } = await supabase.rpc('get_user_dashboard_stats', { user_uuid: userId });
-    if (error) {
-      console.error("Dashboard RPC Error:", error);
-      return { mood_history: [], daily_goal: {}, daily_water: {} };
-    }
+    if (error) return { mood_history: [], daily_goal: {}, daily_water: {} };
     return data;
   }
-
-  /**
-   * ====================================================
-   * 4. UTILITIES & EXPORTS
-   * ====================================================
-   */
 
   static async exportUserData(userId) {
     const { data, error } = await supabase
@@ -279,15 +252,13 @@ export class ClinicalService {
       .eq('user_id', userId)
       .order('log_date', { ascending: false });
 
-    if (error || !data.length) return { success: false, error: error?.message || 'No data found' };
+    if (error || !data.length) return { success: false, error: 'No data found' };
 
     const headers = ['Date', 'Mood', 'Hydration', 'Goal Completed'];
     const csvRows = data.map(r => `"${r.log_date}","${r.mood_rating}","${r.hydration_count}","${r.goal_completed ? 'Yes' : 'No'}"`);
-    
     return { success: true, data: [headers.join(','), ...csvRows].join('\n') };
   }
 
-  /** Private helper for AI failure scenarios */
   static _getFallbackResponse(currentStep) {
     return {
       response_text: "I'm having a little trouble connecting. Let's take a deep breath. What's on your mind?",
@@ -296,7 +267,7 @@ export class ClinicalService {
       updated_cbt_step: currentStep,
       session_action: "CONTINUE",
       homework_assigned: null,
-      clinical_notes: "API Error occurred."
+      clinical_notes: "API Error."
     };
   }
 }
