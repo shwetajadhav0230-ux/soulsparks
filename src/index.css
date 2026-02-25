@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* If you need custom theme overrides in v4, you do them here: */
+@theme {
+  --font-serif: "Instrument Serif", serif;
+  --font-sans: "Inter", sans-serif;
+  
+  /* v4 includes stone-50 by default, but if you want to be safe: */
+  --color-stone-50: #fafaf9;
+  --color-stone-900: #1c1917;
+}
