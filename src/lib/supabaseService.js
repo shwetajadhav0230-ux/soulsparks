@@ -1,57 +1,158 @@
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from './supabaseClient'; 
 
+// Using OpenRouter key directly
 const aiApiKey = import.meta.env.VITE_AI_API_KEY;
-const genAI = new GoogleGenerativeAI(aiApiKey);
 
 export class ClinicalService {
+  
+  // ====================================================
+  // 1. FREE AI LOGIC (Powered by OpenRouter & Llama 3)
+  // ====================================================
+
   /**
-   * General Wellness AI Chat - Bulletproof SDK Version
+   * General Wellness AI Chat
    */
   static async processGeneralChat(userMessage, chatHistory = [], userId) {
-    if (!aiApiKey) return "System Error: API Key is missing in .env file.";
+    if (!aiApiKey) return "System Error: Missing VITE_AI_API_KEY in .env file.";
+
+    // Format history for OpenRouter (Llama 3)
+    const messages = [
+      { 
+        role: "system", 
+        content: "You are SoulSpark, an empathetic wellness guide. Use **bold** for key emotions. End with ONE gentle question." 
+      },
+      ...chatHistory
+        .filter(msg => msg.id !== 1)
+        .map(msg => ({
+          role: msg.sender === 'bot' ? 'assistant' : 'user',
+          content: msg.text
+        })),
+      { role: "user", content: userMessage }
+    ];
 
     try {
-      // Using '-latest' forces Google to find the active model endpoint, fixing the 404 error
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${aiApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-3.1-8b-instruct:free", // 100% FREE MODEL
+          messages: messages,
+        })
+      });
 
-      const persona = "SYSTEM INSTRUCTION: You are SoulSpark, an empathetic wellness guide. Use **bold** for key emotions. End with ONE gentle question.";
-
-      // Formatting history safely
-      const history = [
-        { role: "user", parts: [{ text: persona }] },
-        { role: "model", parts: [{ text: "Understood. I am SoulSpark, your empathetic wellness companion. How can I help you today?" }] },
-        ...chatHistory
-          .filter(msg => msg.id !== 1)
-          .map(msg => ({
-            role: msg.sender === 'bot' ? 'model' : 'user',
-            parts: [{ text: msg.text }]
-          }))
-      ];
-
-      const chat = model.startChat({ history });
-      const result = await chat.sendMessage(userMessage);
-      return result.response.text();
+      const data = await response.json();
+      
+      if (data.error) throw new Error(data.error.message);
+      
+      return data.choices[0].message.content;
 
     } catch (err) {
-      console.error("AI Service Error:", err);
-      
-      if (err.message?.includes("429")) return "I'm taking a short breather (Rate limit). Try again in a minute.";
-      if (err.message?.includes("API key not valid")) return "Your API key is invalid. Please double-check your .env file.";
-      
-      return "I'm having a little trouble thinking. Let's take a deep breath and try again.";
+      console.error("OpenRouter AI Error:", err);
+      return "I'm having a little trouble connecting. Let's take a **deep breath** and try again.";
     }
   }
 
-  // --- Database Logic Below ---
+  /**
+   * Structured CBT AI Logic
+   */
+  static async processCBTInteraction(sessionState) {
+    if (!aiApiKey) throw new Error("Missing AI API Key.");
+
+    const systemPrompt = `
+      You are an empathetic, structured CBT Assistant. 
+      Respond ONLY in valid JSON format matching this schema:
+      {
+        "response_text": "string",
+        "safety_flag": boolean,
+        "risk_level": "LOW"|"MODERATE"|"CRITICAL",
+        "updated_cbt_step": "string",
+        "session_action": "CONTINUE"|"END_SESSION",
+        "homework_assigned": "string"|null,
+        "clinical_notes": "string"
+      }
+    `;
+
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${aiApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-3.1-8b-instruct:free",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: JSON.stringify(sessionState) }
+          ],
+          response_format: { type: "json_object" }
+        })
+      });
+
+      const data = await response.json();
+      return JSON.parse(data.choices[0].message.content);
+
+    } catch (err) {
+      console.error("CBT AI Error:", err);
+      return {
+        response_text: "Let's pause and reflect on that thought. How does it make you feel?",
+        safety_flag: false,
+        risk_level: "LOW",
+        updated_cbt_step: sessionState.current_cbt_step,
+        session_action: "CONTINUE",
+        homework_assigned: null,
+        clinical_notes: "API Error occurred."
+      };
+    }
+  }
+
+  /**
+   * AI Reframe Generator
+   */
+  static async generateAIReframe(automaticThought) {
+    if (!aiApiKey) return ["Consider this from another angle.", "Is this a fact or a feeling?"];
+    
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${aiApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-3.1-8b-instruct:free",
+          messages: [
+            { role: "user", content: `Provide 3 short, helpful CBT reframes for this negative thought: "${automaticThought}". Return strictly as a JSON array of strings.` }
+          ]
+        })
+      });
+
+      const data = await response.json();
+      // Clean up markdown block if AI returns it
+      let rawText = data.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '');
+      return JSON.parse(rawText);
+    } catch (err) {
+      console.error("Reframe Error:", err);
+      return ["I might be looking at this from one perspective.", "I can handle this challenge one step at a time."];
+    }
+  }
+
+  // ====================================================
+  // 2. DATABASE METHODS (Supabase - Unchanged)
+  // ====================================================
+
   static async fetchModules() {
     const { data, error } = await supabase.from('modules').select('*').eq('is_published', true).order('title');
-    if (error) throw new Error(`Module Fetch Error: ${error.message}`);
+    if (error) throw error;
     return data;
   }
 
   static async getClinicalContent(moduleId) {
     const { data, error } = await supabase.from('modules').select(`*, units (id, title, order_index, activities (id, title, type, static_content, api_config, order_index))`).eq('id', moduleId).order('order_index', { foreignTable: 'units', ascending: true });
-    if (error) throw new Error(`Content Load Error: ${error.message}`);
+    if (error) throw error;
     return data?.[0] || null; 
   }
 
@@ -59,7 +160,7 @@ export class ClinicalService {
     const { data, error } = await supabase.from('user_progress').upsert({
         user_id: userId, activity_id: activityId, user_data: payload, status: 'completed', completed_at: new Date().toISOString()
       }, { onConflict: 'user_id, activity_id' });
-    if (error) throw new Error(`Save Log Error: ${error.message}`);
+    if (error) throw error;
     return data;
   }
 
@@ -82,15 +183,12 @@ export class ClinicalService {
     return data ? data.reverse() : [];
   }
 
-  static async processCBTInteraction(sessionState) {
-    return {
-      response_text: "Let's pause and reflect on that thought. Can you identify any cognitive distortions?",
-      safety_flag: false,
-      risk_level: "LOW",
-      updated_cbt_step: sessionState.current_cbt_step,
-      session_action: "CONTINUE",
-      homework_assigned: null,
-      clinical_notes: "Processed via standard logic."
-    };
+  static async exportUserData(userId) {
+    const { data, error } = await supabase.from('daily_wellness').select('log_date, mood_rating, hydration_count, goal_completed').eq('user_id', userId).order('log_date', { ascending: false });
+    if (error || !data.length) return { success: false, error: error?.message || 'No data found' };
+
+    const headers = ['Date', 'Mood', 'Hydration', 'Goal Completed'];
+    const csvRows = data.map(r => `"${r.log_date}","${r.mood_rating}","${r.hydration_count}","${r.goal_completed ? 'Yes' : 'No'}"`);
+    return { success: true, data: [headers.join(','), ...csvRows].join('\n') };
   }
 }

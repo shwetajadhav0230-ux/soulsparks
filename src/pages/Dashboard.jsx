@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
-import { ClinicalService, supabase } from '../lib/supabaseService';
+import { supabase } from '../lib/supabaseClient';
+import { ClinicalService } from '../lib/supabaseService';
 
 const Dashboard = () => {
   // --- STATE ---

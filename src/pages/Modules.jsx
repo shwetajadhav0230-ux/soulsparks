@@ -3,6 +3,9 @@ import { motion } from 'framer-motion';
 import { Brain, Users, Leaf, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+// 1. IMPORT THE WELLNESS GALLERY COMPONENT
+import WellnessGallery from '../components/modules/WellnessGallery';
+
 const Modules = () => {
   const [activeTab, setActiveTab] = useState('clinical');
 
@@ -46,7 +49,6 @@ const Modules = () => {
               <li>• Cognitive Restructuring</li>
               <li>• Behavioral Activation</li>
             </ul>
-            {/* FIXED BUTTON USING LINK */}
             <Link to="/modules/cbt" className="w-full py-3 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-medium flex items-center justify-center gap-2 transition-colors">
               Enter Workshop <ArrowRight className="w-4 h-4" />
             </Link>
@@ -64,7 +66,6 @@ const Modules = () => {
               <li>• Radical Acceptance</li>
               <li>• Mindfulness Square</li>
             </ul>
-            {/* FIXED BUTTON USING LINK */}
             <Link to="/modules/dbt" className="w-full py-3 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-medium flex items-center justify-center gap-2 transition-colors">
               Enter Workshop <ArrowRight className="w-4 h-4" />
             </Link>
@@ -82,7 +83,6 @@ const Modules = () => {
               <li>• Cognitive Defusion</li>
               <li>• The Observing Self</li>
             </ul>
-            {/* FIXED BUTTON USING LINK */}
             <Link to="/modules/act" className="w-full py-3 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-medium flex items-center justify-center gap-2 transition-colors">
               Enter Workshop <ArrowRight className="w-4 h-4" />
             </Link>
@@ -91,9 +91,10 @@ const Modules = () => {
         </div>
       )}
 
+      {/* 2. RENDER THE ACTUAL COMPONENT HERE */}
       {activeTab === 'wellness' && (
-        <div className="text-center py-20 text-stone-500">
-          Wellness Gallery content coming soon.
+        <div className="mt-8">
+          <WellnessGallery />
         </div>
       )}
 
