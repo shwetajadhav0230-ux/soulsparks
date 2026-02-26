@@ -1,12 +1,11 @@
 import { supabase } from './supabaseClient'; 
 
-// Using OpenRouter key directly
 const aiApiKey = import.meta.env.VITE_AI_API_KEY;
 
 export class ClinicalService {
   
   // ====================================================
-  // 1. FREE AI LOGIC (Powered by OpenRouter & Llama 3)
+  // 1. FREE AI LOGIC (Powered by OpenRouter Auto-Router)
   // ====================================================
 
   /**
@@ -15,7 +14,6 @@ export class ClinicalService {
   static async processGeneralChat(userMessage, chatHistory = [], userId) {
     if (!aiApiKey) return "System Error: Missing VITE_AI_API_KEY in .env file.";
 
-    // Format history for OpenRouter (Llama 3)
     const messages = [
       { 
         role: "system", 
@@ -35,10 +33,13 @@ export class ClinicalService {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${aiApiKey}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "HTTP-Referer": window.location.origin, 
+          "X-Title": "SoulSpark App"
         },
         body: JSON.stringify({
-          model: "meta-llama/llama-3.1-8b-instruct:free", // 100% FREE MODEL
+          // THIS IS THE MAGIC FIX: It auto-selects a working free model
+          model: "openrouter/free", 
           messages: messages,
         })
       });
@@ -80,10 +81,13 @@ export class ClinicalService {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${aiApiKey}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "HTTP-Referer": window.location.origin, 
+          "X-Title": "SoulSpark App"
         },
         body: JSON.stringify({
-          model: "meta-llama/llama-3.1-8b-instruct:free",
+          // MAGIC FIX APPLIED HERE TOO
+          model: "openrouter/free",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: JSON.stringify(sessionState) }
@@ -120,10 +124,13 @@ export class ClinicalService {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${aiApiKey}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "HTTP-Referer": window.location.origin, 
+          "X-Title": "SoulSpark App"
         },
         body: JSON.stringify({
-          model: "meta-llama/llama-3.1-8b-instruct:free",
+          // MAGIC FIX APPLIED HERE TOO
+          model: "openrouter/free",
           messages: [
             { role: "user", content: `Provide 3 short, helpful CBT reframes for this negative thought: "${automaticThought}". Return strictly as a JSON array of strings.` }
           ]
@@ -131,7 +138,6 @@ export class ClinicalService {
       });
 
       const data = await response.json();
-      // Clean up markdown block if AI returns it
       let rawText = data.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '');
       return JSON.parse(rawText);
     } catch (err) {
