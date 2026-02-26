@@ -46,7 +46,7 @@ export class ClinicalService {
 
     } catch (err) {
       console.error("OpenRouter AI Error:", err);
-      if (err.message.includes("User not found") || err.message.includes("401")) {
+      if (err.message?.includes("User not found") || err.message?.includes("401")) {
          return "API Error: OpenRouter key is invalid or deleted. Please put a new key in your .env file.";
       }
       return "I'm having a little trouble connecting. Let's take a **deep breath** and try again.";
@@ -138,7 +138,63 @@ export class ClinicalService {
   }
 
   // ====================================================
-  // 2. DATABASE METHODS & ANALYTICS (Supabase)
+  // 2. CLINICAL ANALYSIS (SYMPTOM DETECTION)
+  // ====================================================
+
+  static async analyzeUserPatterns(userId) {
+    if (!aiApiKey) return ["API Key Missing"];
+    
+    try {
+      // Fetch recent journals and progress data to act as context for the AI
+      const { data: journals } = await supabase.from('journal_entries').select('content').eq('user_id', userId).limit(5);
+      const { data: progress } = await supabase.from('user_progress').select('user_data').eq('user_id', userId).limit(10);
+      
+      let combinedText = "";
+      if (journals) combinedText += journals.map(j => j.content).join(". ");
+      if (progress) {
+        progress.forEach(p => {
+          if (p.user_data && typeof p.user_data === 'string') combinedText += " " + p.user_data;
+          if (p.user_data?.notes) combinedText += " " + p.user_data.notes;
+          if (p.user_data?.automatic_thought) combinedText += " " + p.user_data.automatic_thought;
+        });
+      }
+
+      // If user hasn't chatted or journaled much yet
+      if (!combinedText || combinedText.trim().length < 10) {
+        return ["Not enough data to analyze"];
+      }
+
+      const prompt = `Act as a clinical psychologist. Analyze this user's recent chat and journal data: "${combinedText}". Identify up to 4 potential mental health symptoms or emotional patterns (e.g., "Burnout", "Anxiety", "Low Self-Esteem", "Fatigue"). Respond ONLY with a valid JSON object matching this schema: { "symptoms": ["string", "string"] }`;
+
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${aiApiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": window.location.origin, 
+          "X-Title": "SoulSpark App"
+        },
+        body: JSON.stringify({
+          model: "openrouter/free",
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" } // Force JSON
+        })
+      });
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+      
+      const parsed = JSON.parse(data.choices[0].message.content);
+      return parsed.symptoms || ["Analysis unavailable"];
+
+    } catch (err) {
+      console.error("Pattern Analysis Error:", err);
+      return ["Unable to analyze at this time"];
+    }
+  }
+
+  // ====================================================
+  // 3. DATABASE METHODS & ANALYTICS (Supabase)
   // ====================================================
 
   static async fetchModules() {
@@ -161,30 +217,19 @@ export class ClinicalService {
     return data;
   }
 
-  // *** FIX FOR THE 406 NOT ACCEPTABLE ERROR ***
   static async getDailyWellness(userId, dateStr) {
-    // We use .limit(1) instead of .single(). This guarantees it will NEVER crash, even if there are duplicates!
-    const { data, error } = await supabase
-      .from('daily_wellness')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('log_date', dateStr)
-      .limit(1); 
-      
+    const { data, error } = await supabase.from('daily_wellness').select('*').eq('user_id', userId).eq('log_date', dateStr).limit(1); 
     if (error) {
       console.error("Wellness Load Error:", error);
       return { mood_rating: null, hydration_count: 0, goal_completed: false };
     }
-    
     return (data && data.length > 0) ? data[0] : { mood_rating: null, hydration_count: 0, goal_completed: false };
   }
 
-  // *** FIX FOR THE 406 NOT ACCEPTABLE ERROR ***
   static async updateDailyWellness(userId, dateStr, updates) {
     const { data, error } = await supabase.from('daily_wellness').upsert({
         user_id: userId, log_date: dateStr, ...updates, updated_at: new Date().toISOString()
       }, { onConflict: 'user_id, log_date' }).select();
-      
     if (error) throw error;
     return data;
   }
@@ -197,7 +242,6 @@ export class ClinicalService {
   static async exportUserData(userId) {
     const { data, error } = await supabase.from('daily_wellness').select('log_date, mood_rating, hydration_count, goal_completed').eq('user_id', userId).order('log_date', { ascending: false });
     if (error || !data.length) return { success: false, error: error?.message || 'No data found' };
-
     const headers = ['Date', 'Mood', 'Hydration', 'Goal Completed'];
     const csvRows = data.map(r => `"${r.log_date}","${r.mood_rating}","${r.hydration_count}","${r.goal_completed ? 'Yes' : 'No'}"`);
     return { success: true, data: [headers.join(','), ...csvRows].join('\n') };
@@ -205,15 +249,8 @@ export class ClinicalService {
 
   static async getDashboardAnalytics(userId) {
     try {
-      const { count: journalCount } = await supabase
-        .from('journal_entries')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', userId);
-
-      const { data: progressData } = await supabase
-        .from('user_progress')
-        .select('activity_id')
-        .eq('user_id', userId);
+      const { count: journalCount } = await supabase.from('journal_entries').select('*', { count: 'exact', head: true }).eq('user_id', userId);
+      const { data: progressData } = await supabase.from('user_progress').select('activity_id').eq('user_id', userId);
 
       let stats = { cbt: 0, dbt: 0, act: 0, chatInteractions: 0, journal: journalCount || 0 };
 

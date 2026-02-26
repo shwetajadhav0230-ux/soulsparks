@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { 
   Activity, CheckCircle, Plus, Minus, Sun, Droplets, 
   Download, Calendar as CalendarIcon, ChevronLeft, ChevronRight, Sparkles,
-  Brain, Users, Leaf, MessageSquare, BookOpen, BarChart3, TrendingUp
+  Brain, Users, Leaf, MessageSquare, BookOpen, BarChart3, TrendingUp, AlertCircle
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid 
@@ -24,6 +24,7 @@ const Dashboard = () => {
   const [moodHistory, setMoodHistory] = useState([0,0,0,0,0,0,0]); 
   
   const [analytics, setAnalytics] = useState({ cbt: 0, dbt: 0, act: 0, chatInteractions: 0, journal: 0 });
+  const [symptoms, setSymptoms] = useState(["Analyzing..."]); // New State for Symptoms
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
 
@@ -39,8 +40,13 @@ const Dashboard = () => {
       const name = user.user_metadata?.full_name?.split(' ')[0] || 'there';
       setUserName(name);
       
+      // Load long-term analytics
       const stats = await ClinicalService.getDashboardAnalytics(user.id);
       setAnalytics(stats);
+
+      // Load AI Symptom Detection
+      const detectedSymptoms = await ClinicalService.analyzeUserPatterns(user.id);
+      setSymptoms(detectedSymptoms);
     }
   };
 
@@ -143,10 +149,10 @@ const Dashboard = () => {
   // --- HAALAT CHART DATA FORMATTING ---
   const chartData = moodHistory.map((val, i) => {
     const d = new Date();
-    d.setDate(d.getDate() - (6 - i)); // Maps back 7 days
+    d.setDate(d.getDate() - (6 - i));
     return {
       name: d.toLocaleDateString('en-US', { weekday: 'short' }),
-      mood: val > 0 ? val : null // If mood is 0 (unlogged), skip the point
+      mood: val > 0 ? val : null 
     };
   });
 
@@ -232,67 +238,59 @@ const Dashboard = () => {
           </Card>
         </div>
 
-        {/* ROW 2: HAALAT (WELLBEING TREND) */}
-        <Card className="p-8 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow relative overflow-hidden mb-6">
-          <div className="flex justify-between items-end mb-6">
-            <div>
-              <h3 className="text-xl font-serif text-stone-900 mb-1 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-blue-500" />
-                Haalat (Wellbeing Trend)
-              </h3>
-              <p className="text-stone-500 text-sm">Your emotional state over the last 7 days.</p>
-            </div>
-            <div className="text-right">
-              <span className="text-xs font-bold text-stone-400 uppercase tracking-widest">7-Day Average</span>
-              <p className="text-2xl font-serif text-blue-600">
-                {averageMood} <span className="text-sm text-stone-400">/5</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="h-64 w-full mt-4">
-            {validPoints.length === 0 ? (
-              <div className="w-full h-full flex items-center justify-center bg-stone-50 rounded-2xl border-2 border-dashed border-stone-200">
-                <p className="text-stone-400 text-sm font-medium">Log your mood to see your trend here.</p>
+        {/* ROW 2: HAALAT (WELLBEING TREND) & AI SYMPTOMS */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          <Card className="lg:col-span-2 p-8 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow relative overflow-hidden">
+            <div className="flex justify-between items-end mb-6">
+              <div>
+                <h3 className="text-xl font-serif text-stone-900 mb-1 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-blue-500" /> Haalat (Wellbeing Trend)
+                </h3>
+                <p className="text-stone-500 text-sm">Your emotional state over the last 7 days.</p>
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f5f5f4" />
-                  <XAxis 
-                    dataKey="name" 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fill: '#a8a29e', fontSize: 12, fontWeight: 500 }} 
-                    dy={10}
-                  />
-                  <YAxis 
-                    domain={[1, 5]} 
-                    ticks={[1, 2, 3, 4, 5]} 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{ fill: '#a8a29e', fontSize: 12, fontWeight: 500 }} 
-                  />
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                    itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
-                    labelStyle={{ color: '#78716c', marginBottom: '4px' }}
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="mood" 
-                    name="Mood Rating"
-                    stroke="#3b82f6" 
-                    strokeWidth={4} 
-                    dot={{ fill: '#fff', stroke: '#3b82f6', strokeWidth: 3, r: 5 }} 
-                    activeDot={{ r: 8, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} 
-                    connectNulls // This ensures the line bridges over days you missed!
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </Card>
+              <div className="text-right">
+                <span className="text-xs font-bold text-stone-400 uppercase tracking-widest">7-Day Avg</span>
+                <p className="text-2xl font-serif text-blue-600">
+                  {averageMood} <span className="text-sm text-stone-400">/5</span>
+                </p>
+              </div>
+            </div>
+
+            <div style={{ width: '100%', height: 250, minHeight: 250 }} className="mt-4">
+              {validPoints.length === 0 ? (
+                <div className="w-full h-full flex items-center justify-center bg-stone-50 rounded-2xl border-2 border-dashed border-stone-200">
+                  <p className="text-stone-400 text-sm font-medium">Log your mood to see your trend here.</p>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f5f5f4" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#a8a29e', fontSize: 12, fontWeight: 500 }} dy={10} />
+                    <YAxis domain={[1, 5]} ticks={[1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tick={{ fill: '#a8a29e', fontSize: 12, fontWeight: 500 }} />
+                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }} />
+                    <Line type="monotone" dataKey="mood" name="Mood Rating" stroke="#3b82f6" strokeWidth={4} dot={{ fill: '#fff', stroke: '#3b82f6', strokeWidth: 3, r: 5 }} activeDot={{ r: 8, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </Card>
+
+          {/* AI Symptom Detection Card */}
+          <Card className="p-6 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow flex flex-col">
+            <h3 className="text-lg font-serif text-stone-900 mb-1 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-rose-500" /> Clinical Patterns
+            </h3>
+            <p className="text-stone-500 text-sm mb-6">AI analysis of your recent journal entries and interactions.</p>
+            
+            <div className="flex flex-wrap gap-2 mt-auto">
+              {symptoms.map((sym, i) => (
+                <span key={i} className="px-3 py-1.5 bg-rose-50 text-rose-700 rounded-xl text-sm font-medium border border-rose-100 shadow-sm">
+                  {sym}
+                </span>
+              ))}
+            </div>
+          </Card>
+        </div>
 
         {/* ROW 3: JOURNEY ANALYTICS */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
