@@ -3,8 +3,11 @@ import { motion } from 'framer-motion';
 import { 
   Activity, CheckCircle, Plus, Minus, Sun, Droplets, 
   Download, Calendar as CalendarIcon, ChevronLeft, ChevronRight, Sparkles,
-  Brain, Users, Leaf, MessageSquare, BookOpen, BarChart3
+  Brain, Users, Leaf, MessageSquare, BookOpen, BarChart3, TrendingUp
 } from 'lucide-react';
+import { 
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid 
+} from 'recharts';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import { supabase } from '../lib/supabaseClient';
@@ -20,7 +23,6 @@ const Dashboard = () => {
   const [moodToday, setMoodToday] = useState(null);
   const [moodHistory, setMoodHistory] = useState([0,0,0,0,0,0,0]); 
   
-  // New Analytics State
   const [analytics, setAnalytics] = useState({ cbt: 0, dbt: 0, act: 0, chatInteractions: 0, journal: 0 });
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
@@ -37,7 +39,6 @@ const Dashboard = () => {
       const name = user.user_metadata?.full_name?.split(' ')[0] || 'there';
       setUserName(name);
       
-      // Load long-term analytics
       const stats = await ClinicalService.getDashboardAnalytics(user.id);
       setAnalytics(stats);
     }
@@ -130,15 +131,29 @@ const Dashboard = () => {
     return "Good evening";
   };
   const formatDateDisplay = (dateStr) => new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  const getMoodColor = (rating, isChart = false) => {
-    if (!rating || rating === 0) return isChart ? 'bg-stone-100' : 'bg-stone-100 text-stone-400';
-    if (rating >= 4) return 'bg-emerald-400 text-white';
-    if (rating === 3) return 'bg-amber-400 text-white';
-    return 'bg-indigo-400 text-white';
+  const getMoodColor = (rating) => {
+    if (!rating || rating === 0) return 'bg-stone-50 text-stone-400 hover:bg-stone-100';
+    if (rating >= 4) return 'bg-emerald-400 text-white shadow-md ring-4 ring-stone-50';
+    if (rating === 3) return 'bg-amber-400 text-white shadow-md ring-4 ring-stone-50';
+    return 'bg-indigo-400 text-white shadow-md ring-4 ring-stone-50';
   };
 
-  // Calculate max value for module charts
   const maxModule = Math.max(analytics.cbt, analytics.dbt, analytics.act, 1);
+
+  // --- HAALAT CHART DATA FORMATTING ---
+  const chartData = moodHistory.map((val, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i)); // Maps back 7 days
+    return {
+      name: d.toLocaleDateString('en-US', { weekday: 'short' }),
+      mood: val > 0 ? val : null // If mood is 0 (unlogged), skip the point
+    };
+  });
+
+  const validPoints = moodHistory.filter(v => v > 0);
+  const averageMood = validPoints.length > 0 
+    ? (validPoints.reduce((a, b) => a + b, 0) / validPoints.length).toFixed(1) 
+    : '-';
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-8 animate-fade-in pb-20">
@@ -176,16 +191,13 @@ const Dashboard = () => {
         {/* ROW 1: DAILY TRACKERS */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <Card className="p-6 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow">
-            <div className="flex justify-between items-start mb-6">
-              <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800">
-                <Sun className="w-5 h-5 text-amber-500" /> Daily Mood
-              </h3>
-            </div>
+            <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 mb-6">
+              <Sun className="w-5 h-5 text-amber-500" /> Daily Mood
+            </h3>
             <div className="flex justify-between gap-2">
               {[1, 2, 3, 4, 5].map((rating) => (
                 <motion.button key={rating} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleMoodSelect(rating)}
-                  className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-300 shadow-sm
-                    ${moodToday === rating ? `${getMoodColor(rating)} shadow-md ring-4 ring-stone-50` : 'bg-stone-50 text-stone-400 hover:bg-stone-100'}`}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-300 ${getMoodColor(moodToday === rating ? rating : 0)}`}
                 >
                   {rating}
                 </motion.button>
@@ -201,13 +213,9 @@ const Dashboard = () => {
               <p className="text-sm text-stone-400">Glasses today</p>
             </div>
             <div className="flex items-center gap-4 bg-stone-50 p-2 rounded-2xl border border-stone-100">
-              <button onClick={() => updateWater(-1)} className="w-10 h-10 rounded-xl bg-white text-stone-500 hover:text-stone-800 shadow-sm flex items-center justify-center transition-colors">
-                <Minus className="w-5 h-5" />
-              </button>
+              <button onClick={() => updateWater(-1)} className="w-10 h-10 rounded-xl bg-white text-stone-500 hover:text-stone-800 shadow-sm flex items-center justify-center transition-colors"><Minus className="w-5 h-5" /></button>
               <span className="text-2xl font-bold text-cyan-600 w-6 text-center">{hydration}</span>
-              <button onClick={() => updateWater(1)} className="w-10 h-10 rounded-xl bg-cyan-500 text-white shadow-sm hover:bg-cyan-600 flex items-center justify-center transition-colors">
-                <Plus className="w-5 h-5" />
-              </button>
+              <button onClick={() => updateWater(1)} className="w-10 h-10 rounded-xl bg-cyan-500 text-white shadow-sm hover:bg-cyan-600 flex items-center justify-center transition-colors"><Plus className="w-5 h-5" /></button>
             </div>
           </Card>
 
@@ -219,17 +227,75 @@ const Dashboard = () => {
               <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors duration-300 ${goalChecked ? 'bg-emerald-500 text-white' : 'bg-stone-100 text-stone-300'}`}>
                 <CheckCircle className={`w-5 h-5 ${goalChecked ? 'opacity-100' : 'opacity-50'}`} />
               </div>
-              <span className={`font-semibold ${goalChecked ? 'text-emerald-800' : 'text-stone-600'}`}>
-                {goalChecked ? 'Goal Achieved!' : 'Mark as Done'}
-              </span>
+              <span className={`font-semibold ${goalChecked ? 'text-emerald-800' : 'text-stone-600'}`}>{goalChecked ? 'Goal Achieved!' : 'Mark as Done'}</span>
             </motion.div>
           </Card>
         </div>
 
-        {/* ROW 2: JOURNEY ANALYTICS */}
+        {/* ROW 2: HAALAT (WELLBEING TREND) */}
+        <Card className="p-8 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow relative overflow-hidden mb-6">
+          <div className="flex justify-between items-end mb-6">
+            <div>
+              <h3 className="text-xl font-serif text-stone-900 mb-1 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-blue-500" />
+                Haalat (Wellbeing Trend)
+              </h3>
+              <p className="text-stone-500 text-sm">Your emotional state over the last 7 days.</p>
+            </div>
+            <div className="text-right">
+              <span className="text-xs font-bold text-stone-400 uppercase tracking-widest">7-Day Average</span>
+              <p className="text-2xl font-serif text-blue-600">
+                {averageMood} <span className="text-sm text-stone-400">/5</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="h-64 w-full mt-4">
+            {validPoints.length === 0 ? (
+              <div className="w-full h-full flex items-center justify-center bg-stone-50 rounded-2xl border-2 border-dashed border-stone-200">
+                <p className="text-stone-400 text-sm font-medium">Log your mood to see your trend here.</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f5f5f4" />
+                  <XAxis 
+                    dataKey="name" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#a8a29e', fontSize: 12, fontWeight: 500 }} 
+                    dy={10}
+                  />
+                  <YAxis 
+                    domain={[1, 5]} 
+                    ticks={[1, 2, 3, 4, 5]} 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#a8a29e', fontSize: 12, fontWeight: 500 }} 
+                  />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                    itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
+                    labelStyle={{ color: '#78716c', marginBottom: '4px' }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="mood" 
+                    name="Mood Rating"
+                    stroke="#3b82f6" 
+                    strokeWidth={4} 
+                    dot={{ fill: '#fff', stroke: '#3b82f6', strokeWidth: 3, r: 5 }} 
+                    activeDot={{ r: 8, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} 
+                    connectNulls // This ensures the line bridges over days you missed!
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Card>
+
+        {/* ROW 3: JOURNEY ANALYTICS */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
-          {/* Module Engagement Chart */}
           <Card className="p-8 rounded-3xl border-0 shadow-sm bg-white relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
               <BarChart3 className="w-32 h-32 text-emerald-900" />
@@ -238,7 +304,6 @@ const Dashboard = () => {
             <p className="text-stone-500 text-sm mb-8 relative z-10">Modules and exercises completed over time.</p>
             
             <div className="space-y-6 relative z-10">
-              {/* CBT */}
               <div>
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-sm font-bold text-blue-800 flex items-center gap-2"><Brain className="w-4 h-4"/> CBT</span>
@@ -248,8 +313,6 @@ const Dashboard = () => {
                   <motion.div initial={{ width: 0 }} animate={{ width: `${(analytics.cbt / maxModule) * 100}%` }} transition={{ duration: 1, ease: "easeOut" }} className="h-full bg-blue-500 rounded-full" />
                 </div>
               </div>
-              
-              {/* DBT */}
               <div>
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-sm font-bold text-purple-800 flex items-center gap-2"><Users className="w-4 h-4"/> DBT</span>
@@ -259,8 +322,6 @@ const Dashboard = () => {
                   <motion.div initial={{ width: 0 }} animate={{ width: `${(analytics.dbt / maxModule) * 100}%` }} transition={{ duration: 1, delay: 0.2, ease: "easeOut" }} className="h-full bg-purple-500 rounded-full" />
                 </div>
               </div>
-
-              {/* ACT */}
               <div>
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-sm font-bold text-emerald-800 flex items-center gap-2"><Leaf className="w-4 h-4"/> ACT</span>
@@ -273,7 +334,6 @@ const Dashboard = () => {
             </div>
           </Card>
 
-          {/* Interaction & Expression Stats */}
           <div className="grid grid-rows-2 gap-6">
             <Card className="p-6 rounded-3xl border-0 shadow-sm bg-gradient-to-br from-stone-800 to-stone-900 text-white flex items-center justify-between">
               <div>
@@ -297,8 +357,8 @@ const Dashboard = () => {
               </div>
             </Card>
           </div>
-
         </div>
+
       </div>
     </div>
   );
