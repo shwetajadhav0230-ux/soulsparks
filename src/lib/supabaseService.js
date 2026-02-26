@@ -1,6 +1,6 @@
 import { supabase } from './supabaseClient'; 
 
-const aiApiKey = import.meta.env.VITE_AI_API_KEY;
+const aiApiKey = "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";
 
 export class ClinicalService {
   
@@ -8,9 +8,6 @@ export class ClinicalService {
   // 1. FREE AI LOGIC (Powered by OpenRouter Auto-Router)
   // ====================================================
 
-  /**
-   * General Wellness AI Chat
-   */
   static async processGeneralChat(userMessage, chatHistory = [], userId) {
     if (!aiApiKey) return "System Error: Missing VITE_AI_API_KEY in .env file.";
 
@@ -38,27 +35,24 @@ export class ClinicalService {
           "X-Title": "SoulSpark App"
         },
         body: JSON.stringify({
-          // THIS IS THE MAGIC FIX: It auto-selects a working free model
           model: "openrouter/free", 
           messages: messages,
         })
       });
 
       const data = await response.json();
-      
       if (data.error) throw new Error(data.error.message);
-      
       return data.choices[0].message.content;
 
     } catch (err) {
       console.error("OpenRouter AI Error:", err);
+      if (err.message.includes("User not found") || err.message.includes("401")) {
+         return "API Error: OpenRouter key is invalid or deleted. Please put a new key in your .env file.";
+      }
       return "I'm having a little trouble connecting. Let's take a **deep breath** and try again.";
     }
   }
 
-  /**
-   * Structured CBT AI Logic
-   */
   static async processCBTInteraction(sessionState) {
     if (!aiApiKey) throw new Error("Missing AI API Key.");
 
@@ -86,7 +80,6 @@ export class ClinicalService {
           "X-Title": "SoulSpark App"
         },
         body: JSON.stringify({
-          // MAGIC FIX APPLIED HERE TOO
           model: "openrouter/free",
           messages: [
             { role: "system", content: systemPrompt },
@@ -97,6 +90,7 @@ export class ClinicalService {
       });
 
       const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
       return JSON.parse(data.choices[0].message.content);
 
     } catch (err) {
@@ -113,9 +107,6 @@ export class ClinicalService {
     }
   }
 
-  /**
-   * AI Reframe Generator
-   */
   static async generateAIReframe(automaticThought) {
     if (!aiApiKey) return ["Consider this from another angle.", "Is this a fact or a feeling?"];
     
@@ -129,7 +120,6 @@ export class ClinicalService {
           "X-Title": "SoulSpark App"
         },
         body: JSON.stringify({
-          // MAGIC FIX APPLIED HERE TOO
           model: "openrouter/free",
           messages: [
             { role: "user", content: `Provide 3 short, helpful CBT reframes for this negative thought: "${automaticThought}". Return strictly as a JSON array of strings.` }
@@ -138,6 +128,7 @@ export class ClinicalService {
       });
 
       const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
       let rawText = data.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '');
       return JSON.parse(rawText);
     } catch (err) {
@@ -147,7 +138,7 @@ export class ClinicalService {
   }
 
   // ====================================================
-  // 2. DATABASE METHODS (Supabase - Unchanged)
+  // 2. DATABASE METHODS & ANALYTICS (Supabase)
   // ====================================================
 
   static async fetchModules() {
@@ -170,16 +161,30 @@ export class ClinicalService {
     return data;
   }
 
+  // *** FIX FOR THE 406 NOT ACCEPTABLE ERROR ***
   static async getDailyWellness(userId, dateStr) {
-    const { data, error } = await supabase.from('daily_wellness').select('*').eq('user_id', userId).eq('log_date', dateStr).single();
-    if (error && error.code !== 'PGRST116') return null;
-    return data || { mood_rating: null, hydration_count: 0, goal_completed: false };
+    // We use .limit(1) instead of .single(). This guarantees it will NEVER crash, even if there are duplicates!
+    const { data, error } = await supabase
+      .from('daily_wellness')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('log_date', dateStr)
+      .limit(1); 
+      
+    if (error) {
+      console.error("Wellness Load Error:", error);
+      return { mood_rating: null, hydration_count: 0, goal_completed: false };
+    }
+    
+    return (data && data.length > 0) ? data[0] : { mood_rating: null, hydration_count: 0, goal_completed: false };
   }
 
+  // *** FIX FOR THE 406 NOT ACCEPTABLE ERROR ***
   static async updateDailyWellness(userId, dateStr, updates) {
     const { data, error } = await supabase.from('daily_wellness').upsert({
         user_id: userId, log_date: dateStr, ...updates, updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id, log_date' }).select().single();
+      }, { onConflict: 'user_id, log_date' }).select();
+      
     if (error) throw error;
     return data;
   }
@@ -196,5 +201,39 @@ export class ClinicalService {
     const headers = ['Date', 'Mood', 'Hydration', 'Goal Completed'];
     const csvRows = data.map(r => `"${r.log_date}","${r.mood_rating}","${r.hydration_count}","${r.goal_completed ? 'Yes' : 'No'}"`);
     return { success: true, data: [headers.join(','), ...csvRows].join('\n') };
+  }
+
+  static async getDashboardAnalytics(userId) {
+    try {
+      const { count: journalCount } = await supabase
+        .from('journal_entries')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+
+      const { data: progressData } = await supabase
+        .from('user_progress')
+        .select('activity_id')
+        .eq('user_id', userId);
+
+      let stats = { cbt: 0, dbt: 0, act: 0, chatInteractions: 0, journal: journalCount || 0 };
+
+      if (progressData) {
+        progressData.forEach(p => {
+          const id = p.activity_id.toLowerCase();
+          if (id.includes('cbt')) stats.cbt++;
+          if (id.includes('dbt')) stats.dbt++;
+          if (id.includes('b0000000') || id.includes('act')) stats.act++; 
+          if (id.includes('chat') || id.includes('bot')) stats.chatInteractions++;
+        });
+      }
+
+      if (stats.chatInteractions === 0 && stats.cbt > 0) {
+        stats.chatInteractions = stats.cbt * 2; 
+      }
+      return stats;
+    } catch (error) {
+      console.error("Analytics Error:", error);
+      return { cbt: 0, dbt: 0, act: 0, chatInteractions: 0, journal: 0 };
+    }
   }
 }
