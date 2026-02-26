@@ -2,14 +2,15 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Compass, Cloud, Eye, ArrowLeft, ArrowRight, CheckCircle, 
-  Loader2, BookOpen, Leaf, ShieldAlert, Sparkles, Map
+  Loader2, BookOpen, Leaf, ShieldAlert, Sparkles, Map, Award
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom'; // ADDED useNavigate
 import { supabase } from '../../lib/supabaseClient';
 import { ClinicalService } from '../../lib/supabaseService';
 import Button from '../../components/common/Button';
 
 const ACTModule = () => {
+  const navigate = useNavigate(); // For redirecting after completion
   const [activeTab, setActiveTab] = useState('basics');
 
   // --- 1. VALUES CLARIFICATION STATE ---
@@ -30,6 +31,9 @@ const ACTModule = () => {
   const [isSavingDefusion, setIsSavingDefusion] = useState(false);
   const [defusionSaved, setDefusionSaved] = useState(false);
 
+  // --- 3. WORKSHOP STATE ---
+  const [isWorkshopCompleting, setIsWorkshopCompleting] = useState(false);
+
   // --- HANDLERS ---
   const toggleValue = (value) => {
     if (selectedValues.includes(value)) {
@@ -44,13 +48,14 @@ const ACTModule = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        // 1. Save detailed clinical record
-        await ClinicalService.saveActivityLog(user.id, 'b0000000-0000-0000-0000-000000000001', {
+        // FIX: Using valid UUIDs for Database constraints
+        const ACT_VALUES_UUID = '99999999-1101-4433-8901-000000000001'; 
+        
+        await ClinicalService.saveActivityLog(user.id, ACT_VALUES_UUID, {
           core_values: selectedValues,
-          exercise: "Values Clarification"
+          type: "ACT_VALUES_CLARIFICATION"
         });
 
-        // 2. Ping the "Daily Goal" tracker for the Dashboard
         await ClinicalService.saveActivityLog(user.id, 'a0000000-0000-0000-0000-000000000002', { 
           completed: true, 
           activity_type: 'Values Clarification' 
@@ -58,13 +63,10 @@ const ACTModule = () => {
       }
       
       setValuesSaved(true);
-      // 👉 AUTOMATICALLY JUMP TO THE NEXT PAGE AFTER RECORDING
       setActiveTab('defusion');
-      
     } catch (error) {
       console.error("Failed to save values:", error);
       setValuesSaved(true);
-      // Fallback: Still move to the next page even if testing without a DB
       setActiveTab('defusion');
     } finally {
       setIsSavingValues(false);
@@ -76,15 +78,22 @@ const ACTModule = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        // 1. Save detailed clinical record
-        await ClinicalService.saveActivityLog(user.id, 'b0000000-0000-0000-0000-000000000002', {
+        // FIX: Using valid UUIDs for Database constraints
+        const ACT_DEFUSION_UUID = '99999999-1101-4433-8901-000000000002';
+
+        await ClinicalService.saveActivityLog(user.id, ACT_DEFUSION_UUID, {
           original_thought: stickyThought,
           defused_thought: `I am having the thought that ${stickyThought}`,
           reflection: defusionReflection,
-          exercise: "Cognitive Defusion"
+          type: "ACT_COGNITIVE_DEFUSION"
         });
 
-        // 2. Ping the "Daily Goal" tracker
+        await ClinicalService.saveJournalEntry(
+          user.id, 
+          `**Cognitive Defusion**\nOriginal: ${stickyThought}\nDefused: I am having the thought that ${stickyThought}`, 
+          'Reflective'
+        );
+
         await ClinicalService.saveActivityLog(user.id, 'a0000000-0000-0000-0000-000000000002', { 
           completed: true, 
           activity_type: 'Cognitive Defusion' 
@@ -92,16 +101,40 @@ const ACTModule = () => {
       }
       
       setDefusionSaved(true);
-      // 👉 AUTOMATICALLY JUMP TO THE NEXT PAGE AFTER RECORDING
       setActiveTab('observing');
-      
     } catch (error) {
       console.error("Failed to save defusion practice:", error);
       setDefusionSaved(true);
-      // Fallback: Still move to the next page even if testing without a DB
       setActiveTab('observing');
     } finally {
       setIsSavingDefusion(false);
+    }
+  };
+
+  // NEW: Saves completion state and routes to dashboard
+  const handleCompleteWorkshop = async () => {
+    setIsWorkshopCompleting(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const ACT_WORKSHOP_UUID = '99999999-1101-4433-8901-000000000003';
+        
+        await ClinicalService.saveActivityLog(user.id, ACT_WORKSHOP_UUID, {
+          type: "ACT_WORKSHOP_COMPLETE",
+          completed_at: new Date().toISOString()
+        });
+
+        await ClinicalService.saveJournalEntry(
+          user.id, 
+          `🏆 **Workshop Completed: Acceptance & Commitment Therapy**\nI've practiced observing my thoughts without judgment and am committed to living by my core values: ${selectedValues.join(', ')}.`, 
+          'Empowered'
+        );
+      }
+      navigate('/dashboard');
+    } catch (error) {
+      console.error("Failed to complete ACT workshop:", error);
+    } finally {
+      setIsWorkshopCompleting(false);
     }
   };
 
@@ -120,7 +153,7 @@ const ACTModule = () => {
       </Link>
       
       <div className="flex items-center gap-4 mb-8">
-        <div className="w-16 h-16 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center shadow-sm">
+        <div className="w-16 h-16 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center shadow-sm border border-teal-100">
           <Compass className="w-8 h-8" />
         </div>
         <div>
@@ -130,7 +163,7 @@ const ACTModule = () => {
       </div>
 
       {/* --- TAB NAVIGATION --- */}
-      <div className="flex flex-wrap gap-2 mb-8 bg-stone-100/50 p-1.5 rounded-2xl">
+      <div className="flex flex-wrap gap-2 mb-8 bg-stone-100/50 p-1.5 rounded-2xl border border-stone-200/50">
         {tabs.map(tab => (
           <button
             key={tab.id}
@@ -153,9 +186,7 @@ const ACTModule = () => {
       <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-stone-100 min-h-[500px] overflow-hidden">
         <AnimatePresence mode="wait">
           
-          {/* ========================================== */}
-          {/* TAB 1: THE BASICS (Psychoeducation)          */}
-          {/* ========================================== */}
+          {/* TAB 1: THE BASICS */}
           {activeTab === 'basics' && (
             <motion.div key="basics" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
               <h2 className="text-2xl font-serif text-stone-800 mb-4">Psychological Flexibility</h2>
@@ -197,9 +228,7 @@ const ACTModule = () => {
             </motion.div>
           )}
 
-          {/* ========================================== */}
-          {/* TAB 2: VALUES CLARIFICATION                  */}
-          {/* ========================================== */}
+          {/* TAB 2: VALUES CLARIFICATION */}
           {activeTab === 'values' && (
             <motion.div key="values" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
               {valuesSaved ? (
@@ -210,7 +239,7 @@ const ACTModule = () => {
                   <h2 className="text-3xl font-serif text-stone-900 mb-2">Values Committed</h2>
                   <p className="text-stone-500 max-w-md mx-auto mb-10">You have chosen your compass. Let these values guide your actions, even when thoughts and feelings make it difficult.</p>
                   <div className="flex gap-2 justify-center mb-10">
-                    {selectedValues.map(v => <span key={v} className="bg-teal-50 text-teal-800 px-4 py-2 rounded-full font-bold text-sm">{v}</span>)}
+                    {selectedValues.map(v => <span key={v} className="bg-teal-50 text-teal-800 px-4 py-2 rounded-full font-bold text-sm border border-teal-200">{v}</span>)}
                   </div>
                   <Button onClick={() => setActiveTab('defusion')} className="bg-teal-700 hover:bg-teal-800 text-white flex items-center gap-2">
                     Continue to Defusion <ArrowRight className="w-4 h-4" />
@@ -266,9 +295,7 @@ const ACTModule = () => {
             </motion.div>
           )}
 
-          {/* ========================================== */}
-          {/* TAB 3: COGNITIVE DEFUSION                  */}
-          {/* ========================================== */}
+          {/* TAB 3: COGNITIVE DEFUSION */}
           {activeTab === 'defusion' && (
             <motion.div key="defusion" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
               {defusionSaved ? (
@@ -344,9 +371,7 @@ const ACTModule = () => {
             </motion.div>
           )}
 
-          {/* ========================================== */}
-          {/* TAB 4: THE OBSERVING SELF (Visualization)    */}
-          {/* ========================================== */}
+          {/* TAB 4: THE OBSERVING SELF (Visualization) */}
           {activeTab === 'observing' && (
             <motion.div key="observing" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
               <div className="text-center mb-8">
@@ -357,7 +382,7 @@ const ACTModule = () => {
               </div>
 
               {/* Animation Container */}
-              <div className="relative w-full h-64 bg-teal-50/50 border border-teal-100 rounded-3xl overflow-hidden mb-12 flex items-center justify-center">
+              <div className="relative w-full h-64 bg-teal-50/50 border border-teal-100 rounded-3xl overflow-hidden mb-12 flex items-center justify-center shadow-inner">
                 {/* Background Stream Line */}
                 <div className="absolute left-0 right-0 h-16 bg-teal-100/50 skew-y-3 transform -translate-y-2"></div>
                 
@@ -377,24 +402,26 @@ const ACTModule = () => {
                   >
                     <div className="relative">
                       <Leaf className={`w-8 h-8 ${i % 2 === 0 ? 'text-teal-400' : 'text-emerald-500'} transform rotate-${i * 45}`} />
-                      {/* Abstract thought representation */}
                       <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-4 h-1 bg-white/50 rounded-full"></div>
                     </div>
                   </motion.div>
                 ))}
 
-                <div className="z-10 bg-white/80 backdrop-blur-sm px-6 py-3 rounded-full border border-teal-100 shadow-sm">
+                <div className="z-10 bg-white/80 backdrop-blur-sm px-6 py-3 rounded-full border border-teal-200 shadow-sm">
                   <p className="text-teal-800 font-serif italic">Observe the thought. Let it float by.</p>
                 </div>
               </div>
               
               <div className="flex justify-between items-center border-t border-stone-100 pt-6">
                 <Button variant="secondary" onClick={() => setActiveTab('defusion')}>Back to Defusion</Button>
-                <Link to="/modules">
-                  <Button className="bg-teal-700 hover:bg-teal-800 text-white flex items-center gap-2 px-8">
-                    <CheckCircle className="w-5 h-5" /> Complete Workshop
-                  </Button>
-                </Link>
+                <Button 
+                  onClick={handleCompleteWorkshop} 
+                  disabled={isWorkshopCompleting}
+                  className="bg-teal-700 hover:bg-teal-800 text-white flex items-center gap-2 px-8"
+                >
+                  {isWorkshopCompleting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Award className="w-5 h-5" />} 
+                  Complete Workshop
+                </Button>
               </div>
             </motion.div>
           )}

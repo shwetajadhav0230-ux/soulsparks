@@ -104,12 +104,16 @@ const DBTModule = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
+        // FIX: Replaced 'dbt-tipp-log-001' with a valid UUID to prevent 22P02 error
+        const DBT_TIPP_UUID = '88888888-1101-4433-8901-000000000002';
+        
         // 1. Save detailed clinical record
-        await ClinicalService.saveActivityLog(user.id, 'dbt-tipp-log-001', {
+        await ClinicalService.saveActivityLog(user.id, DBT_TIPP_UUID, {
           skill_used: selectedTipp.title,
           distress_before: distressBefore,
           distress_after: distressAfter,
-          improvement: distressBefore - distressAfter
+          improvement: distressBefore - distressAfter,
+          type: "DBT_TIPP_SKILL"
         });
 
         // 2. Ping the "Daily Goal" tracker so the My Wellness Dashboard updates immediately
@@ -131,12 +135,16 @@ const DBTModule = () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
+        // FIX: Replaced 'dbt-radical-acceptance-001' with valid UUID 
+        const DBT_ACTIVITY_UUID = '88888888-1101-4433-8901-000000000001'; 
+
         // 1. Save detailed clinical record
-        await ClinicalService.saveActivityLog(user.id, 'dbt-radical-acceptance-001', {
+        await ClinicalService.saveActivityLog(user.id, DBT_ACTIVITY_UUID, {
           situation, 
           cost, 
           statement, 
-          final_acceptance_level: acceptanceLevel
+          final_acceptance_level: acceptanceLevel,
+          type: "DBT_RADICAL_ACCEPTANCE"
         });
 
         // 2. Ping the "Daily Goal" tracker for the Wellness Dashboard
@@ -199,7 +207,7 @@ const DBTModule = () => {
         <AnimatePresence mode="wait">
           
           {/* ========================================== */}
-          {/* TAB 1: INTERACTIVE PILLARS                   */}
+          {/* TAB 1: INTERACTIVE PILLARS                 */}
           {/* ========================================== */}
           {activeTab === 'basics' && (
             <motion.div key="basics" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>

@@ -9,14 +9,12 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid 
 } from 'recharts';
 import Button from '../components/common/Button';
-import Card from '../components/common/Card';
 import { supabase } from '../lib/supabaseClient';
 import { ClinicalService } from '../lib/supabaseService';
 
 const Dashboard = () => {
   const getTodayStr = () => new Date().toLocaleDateString('en-CA'); 
   
-  // --- STATE ---
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
   const [hydration, setHydration] = useState(0);
   const [goalChecked, setGoalChecked] = useState(false);
@@ -24,56 +22,44 @@ const Dashboard = () => {
   const [moodHistory, setMoodHistory] = useState([0,0,0,0,0,0,0]); 
   
   const [analytics, setAnalytics] = useState({ cbt: 0, dbt: 0, act: 0, chatInteractions: 0, journal: 0 });
-  const [symptoms, setSymptoms] = useState(["Analyzing..."]); // New State for Symptoms
+  const [symptoms, setSymptoms] = useState(["Analyzing..."]); 
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
 
-  // --- INITIAL LOAD ---
   useEffect(() => {
-    loadDataForDate(selectedDate);
-    fetchUserProfile();
+    const initDashboard = async () => {
+      setLoading(true);
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) throw new Error("No user found");
+
+        const name = user.user_metadata?.full_name?.split(' ')[0] || 'there';
+        setUserName(name);
+
+        const dailyStats = await ClinicalService.getDailyWellness(user.id, selectedDate);
+        setHydration(dailyStats.hydration_count || 0);
+        setGoalChecked(dailyStats.goal_completed || false);
+        setMoodToday(dailyStats.mood_rating || null);
+
+        // Fetch all therapeutic progress (CBT, DBT, ACT)
+        ClinicalService.getDashboardAnalytics(user.id).then(setAnalytics);
+        ClinicalService.analyzeUserPatterns(user.id).then(setSymptoms);
+
+        const history = await ClinicalService.getWellnessHistory(user.id, 7);
+        const ratings = history.map(h => h.mood_rating || 0);
+        const paddedRatings = [...Array(Math.max(0, 7 - ratings.length)).fill(0), ...ratings];
+        setMoodHistory(paddedRatings.slice(-7));
+
+      } catch (err) {
+        console.error("Dashboard Init Error:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initDashboard();
   }, [selectedDate]);
 
-  const fetchUserProfile = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const name = user.user_metadata?.full_name?.split(' ')[0] || 'there';
-      setUserName(name);
-      
-      // Load long-term analytics
-      const stats = await ClinicalService.getDashboardAnalytics(user.id);
-      setAnalytics(stats);
-
-      // Load AI Symptom Detection
-      const detectedSymptoms = await ClinicalService.analyzeUserPatterns(user.id);
-      setSymptoms(detectedSymptoms);
-    }
-  };
-
-  const loadDataForDate = async (dateStr) => {
-    setLoading(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const dailyStats = await ClinicalService.getDailyWellness(user.id, dateStr);
-      setHydration(dailyStats.hydration_count || 0);
-      setGoalChecked(dailyStats.goal_completed || false);
-      setMoodToday(dailyStats.mood_rating || null);
-
-      const history = await ClinicalService.getWellnessHistory(user.id, 7);
-      const ratings = history.map(h => h.mood_rating || 0);
-      const paddedRatings = [...Array(Math.max(0, 7 - ratings.length)).fill(0), ...ratings];
-      setMoodHistory(paddedRatings.slice(-7));
-
-    } catch (err) {
-      console.error("Load Error:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // --- HANDLERS ---
   const handleExport = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -101,7 +87,10 @@ const Dashboard = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       await ClinicalService.updateDailyWellness(user.id, selectedDate, { mood_rating: rating });
-      loadDataForDate(selectedDate); 
+      const history = await ClinicalService.getWellnessHistory(user.id, 7);
+      const ratings = history.map(h => h.mood_rating || 0);
+      const paddedRatings = [...Array(Math.max(0, 7 - ratings.length)).fill(0), ...ratings];
+      setMoodHistory(paddedRatings.slice(-7));
     }
   };
 
@@ -137,16 +126,17 @@ const Dashboard = () => {
     return "Good evening";
   };
   const formatDateDisplay = (dateStr) => new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  
   const getMoodColor = (rating) => {
-    if (!rating || rating === 0) return 'bg-stone-50 text-stone-400 hover:bg-stone-100';
-    if (rating >= 4) return 'bg-emerald-400 text-white shadow-md ring-4 ring-stone-50';
-    if (rating === 3) return 'bg-amber-400 text-white shadow-md ring-4 ring-stone-50';
-    return 'bg-indigo-400 text-white shadow-md ring-4 ring-stone-50';
+    if (!rating || rating === 0) return 'bg-stone-50 dark:bg-zinc-800 text-stone-400 dark:text-zinc-500 hover:bg-stone-100 dark:hover:bg-zinc-700';
+    if (rating >= 4) return 'bg-emerald-400 dark:bg-emerald-500 text-white shadow-md ring-4 ring-stone-50 dark:ring-zinc-900';
+    if (rating === 3) return 'bg-amber-400 dark:bg-amber-500 text-white shadow-md ring-4 ring-stone-50 dark:ring-zinc-900';
+    return 'bg-indigo-400 dark:bg-indigo-500 text-white shadow-md ring-4 ring-stone-50 dark:ring-zinc-900';
   };
 
+  // Dynamically calculate the maximum value to properly scale the progress bars
   const maxModule = Math.max(analytics.cbt, analytics.dbt, analytics.act, 1);
 
-  // --- HAALAT CHART DATA FORMATTING ---
   const chartData = moodHistory.map((val, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
@@ -165,29 +155,29 @@ const Dashboard = () => {
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-8 animate-fade-in pb-20">
       
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-stone-200 pb-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-stone-200 dark:border-zinc-800 pb-6 transition-colors">
         <div className="space-y-2">
-          <p className="text-stone-500 font-medium flex items-center gap-2">
+          <p className="text-stone-500 dark:text-zinc-400 font-medium flex items-center gap-2 transition-colors">
             <Sparkles className="w-4 h-4 text-amber-500" /> {getGreeting()}, {userName}
           </p>
-          <h1 className="text-3xl md:text-4xl font-serif text-stone-800 tracking-tight">Your Wellness Space</h1>
+          <h1 className="text-3xl md:text-4xl font-serif text-stone-800 dark:text-zinc-100 tracking-tight transition-colors">Your Wellness Space</h1>
           
-          <div className="flex items-center gap-1 mt-4 bg-white p-1 rounded-2xl shadow-sm border border-stone-200 w-fit">
-            <button onClick={() => changeDate(-1)} className="p-2 hover:bg-stone-100 rounded-xl transition-colors">
-              <ChevronLeft className="w-4 h-4 text-stone-600" />
+          <div className="flex items-center gap-1 mt-4 bg-white dark:bg-zinc-900 p-1 rounded-2xl shadow-sm border border-stone-200 dark:border-zinc-800 w-fit transition-colors">
+            <button onClick={() => changeDate(-1)} className="p-2 hover:bg-stone-100 dark:hover:bg-zinc-800 rounded-xl transition-colors">
+              <ChevronLeft className="w-4 h-4 text-stone-600 dark:text-zinc-400" />
             </button>
-            <div className="relative flex items-center gap-2 px-3 py-1 font-medium text-stone-700">
-              <CalendarIcon className="w-4 h-4 text-emerald-600" />
+            <div className="relative flex items-center gap-2 px-3 py-1 font-medium text-stone-700 dark:text-zinc-200 transition-colors">
+              <CalendarIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-500" />
               <span>{isToday ? 'Today' : formatDateDisplay(selectedDate)}</span>
               <input type="date" value={selectedDate} max={getTodayStr()} onChange={(e) => setSelectedDate(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
             </div>
-            <button onClick={() => changeDate(1)} disabled={isToday} className={`p-2 rounded-xl transition-colors ${isToday ? 'opacity-30 cursor-not-allowed' : 'hover:bg-stone-100'}`}>
-              <ChevronRight className="w-4 h-4 text-stone-600" />
+            <button onClick={() => changeDate(1)} disabled={isToday} className={`p-2 rounded-xl transition-colors ${isToday ? 'opacity-30 cursor-not-allowed' : 'hover:bg-stone-100 dark:hover:bg-zinc-800'}`}>
+              <ChevronRight className="w-4 h-4 text-stone-600 dark:text-zinc-400" />
             </button>
           </div>
         </div>
 
-        <Button onClick={handleExport} variant="outline" className="flex items-center gap-2 text-stone-600 bg-white shadow-sm hover:bg-stone-50 rounded-xl px-4 py-2 border-stone-200">
+        <Button onClick={handleExport} variant="outline" className="flex items-center gap-2 text-stone-600 dark:text-zinc-300 bg-white dark:bg-zinc-900 shadow-sm hover:bg-stone-50 dark:hover:bg-zinc-800 rounded-xl px-4 py-2 border-stone-200 dark:border-zinc-800 transition-colors">
           <Download className="w-4 h-4" /> Export Data
         </Button>
       </div>
@@ -196,8 +186,8 @@ const Dashboard = () => {
         
         {/* ROW 1: DAILY TRACKERS */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <Card className="p-6 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow">
-            <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 mb-6">
+          <div className="p-6 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors">
+            <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 dark:text-zinc-100 mb-6">
               <Sun className="w-5 h-5 text-amber-500" /> Daily Mood
             </h3>
             <div className="flex justify-between gap-2">
@@ -209,151 +199,156 @@ const Dashboard = () => {
                 </motion.button>
               ))}
             </div>
-          </Card>
+          </div>
 
-          <Card className="p-6 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow flex justify-between items-center">
+          <div className="p-6 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors flex justify-between items-center">
             <div>
-              <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 mb-1">
+              <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 dark:text-zinc-100 mb-1">
                 <Droplets className="w-5 h-5 text-cyan-500" /> Hydration
               </h3>
-              <p className="text-sm text-stone-400">Glasses today</p>
+              <p className="text-sm text-stone-400 dark:text-zinc-500">Glasses today</p>
             </div>
-            <div className="flex items-center gap-4 bg-stone-50 p-2 rounded-2xl border border-stone-100">
-              <button onClick={() => updateWater(-1)} className="w-10 h-10 rounded-xl bg-white text-stone-500 hover:text-stone-800 shadow-sm flex items-center justify-center transition-colors"><Minus className="w-5 h-5" /></button>
-              <span className="text-2xl font-bold text-cyan-600 w-6 text-center">{hydration}</span>
+            <div className="flex items-center gap-4 bg-stone-50 dark:bg-zinc-950 p-2 rounded-2xl border border-stone-100 dark:border-zinc-800 transition-colors">
+              <button onClick={() => updateWater(-1)} className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-800 text-stone-500 dark:text-zinc-400 hover:text-stone-800 dark:hover:text-zinc-100 shadow-sm flex items-center justify-center transition-colors"><Minus className="w-5 h-5" /></button>
+              <span className="text-2xl font-bold text-cyan-600 dark:text-cyan-500 w-6 text-center">{hydration}</span>
               <button onClick={() => updateWater(1)} className="w-10 h-10 rounded-xl bg-cyan-500 text-white shadow-sm hover:bg-cyan-600 flex items-center justify-center transition-colors"><Plus className="w-5 h-5" /></button>
             </div>
-          </Card>
+          </div>
 
-          <Card className="p-6 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow flex flex-col justify-center">
-            <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 mb-4">
+          <div className="p-6 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors flex flex-col justify-center">
+            <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 dark:text-zinc-100 mb-4">
               <Activity className="w-5 h-5 text-emerald-500" /> Daily Focus
             </h3>
-            <motion.div whileTap={{ scale: 0.98 }} onClick={toggleGoal} className={`cursor-pointer border-2 rounded-2xl p-4 flex items-center gap-4 transition-all duration-300 ${goalChecked ? 'border-emerald-500 bg-emerald-50 shadow-inner' : 'border-stone-200 hover:bg-stone-50'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors duration-300 ${goalChecked ? 'bg-emerald-500 text-white' : 'bg-stone-100 text-stone-300'}`}>
+            <motion.div whileTap={{ scale: 0.98 }} onClick={toggleGoal} className={`cursor-pointer border-2 rounded-2xl p-4 flex items-center gap-4 transition-all duration-300 ${goalChecked ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 shadow-inner' : 'border-stone-200 dark:border-zinc-700 hover:bg-stone-50 dark:hover:bg-zinc-800'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors duration-300 ${goalChecked ? 'bg-emerald-500 text-white' : 'bg-stone-100 dark:bg-zinc-800 text-stone-300 dark:text-zinc-500'}`}>
                 <CheckCircle className={`w-5 h-5 ${goalChecked ? 'opacity-100' : 'opacity-50'}`} />
               </div>
-              <span className={`font-semibold ${goalChecked ? 'text-emerald-800' : 'text-stone-600'}`}>{goalChecked ? 'Goal Achieved!' : 'Mark as Done'}</span>
+              <span className={`font-semibold ${goalChecked ? 'text-emerald-800 dark:text-emerald-400' : 'text-stone-600 dark:text-zinc-400'}`}>{goalChecked ? 'Goal Achieved!' : 'Mark as Done'}</span>
             </motion.div>
-          </Card>
+          </div>
         </div>
 
         {/* ROW 2: HAALAT (WELLBEING TREND) & AI SYMPTOMS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <Card className="lg:col-span-2 p-8 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow relative overflow-hidden">
+          <div className="lg:col-span-2 p-8 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors relative overflow-hidden">
             <div className="flex justify-between items-end mb-6">
               <div>
-                <h3 className="text-xl font-serif text-stone-900 mb-1 flex items-center gap-2">
+                <h3 className="text-xl font-serif text-stone-900 dark:text-zinc-100 mb-1 flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-blue-500" /> Haalat (Wellbeing Trend)
                 </h3>
-                <p className="text-stone-500 text-sm">Your emotional state over the last 7 days.</p>
+                <p className="text-stone-500 dark:text-zinc-400 text-sm">Your emotional state over the last 7 days.</p>
               </div>
               <div className="text-right">
-                <span className="text-xs font-bold text-stone-400 uppercase tracking-widest">7-Day Avg</span>
-                <p className="text-2xl font-serif text-blue-600">
-                  {averageMood} <span className="text-sm text-stone-400">/5</span>
+                <span className="text-xs font-bold text-stone-400 dark:text-zinc-500 uppercase tracking-widest">7-Day Avg</span>
+                <p className="text-2xl font-serif text-blue-600 dark:text-blue-400">
+                  {averageMood} <span className="text-sm text-stone-400 dark:text-zinc-500">/5</span>
                 </p>
               </div>
             </div>
 
-            <div style={{ width: '100%', height: 250, minHeight: 250 }} className="mt-4">
+            <div style={{ width: '100%', height: 260, minHeight: 260 }} className="mt-4">
               {validPoints.length === 0 ? (
-                <div className="w-full h-full flex items-center justify-center bg-stone-50 rounded-2xl border-2 border-dashed border-stone-200">
-                  <p className="text-stone-400 text-sm font-medium">Log your mood to see your trend here.</p>
+                <div className="w-full h-full flex items-center justify-center bg-stone-50 dark:bg-zinc-950 rounded-2xl border-2 border-dashed border-stone-200 dark:border-zinc-800 transition-colors">
+                  <p className="text-stone-400 dark:text-zinc-500 text-sm font-medium">Log your mood to see your trend here.</p>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={260}>
                   <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f5f5f4" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#a8a29e', fontSize: 12, fontWeight: 500 }} dy={10} />
-                    <YAxis domain={[1, 5]} ticks={[1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tick={{ fill: '#a8a29e', fontSize: 12, fontWeight: 500 }} />
-                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#52525b" strokeOpacity={0.2} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#71717a', fontSize: 12, fontWeight: 500 }} dy={10} />
+                    <YAxis domain={[1, 5]} ticks={[1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tick={{ fill: '#71717a', fontSize: 12, fontWeight: 500 }} />
+                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', backgroundColor: '#18181b', color: '#fff', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.3)' }} itemStyle={{ color: '#60a5fa', fontWeight: 'bold' }} />
                     <Line type="monotone" dataKey="mood" name="Mood Rating" stroke="#3b82f6" strokeWidth={4} dot={{ fill: '#fff', stroke: '#3b82f6', strokeWidth: 3, r: 5 }} activeDot={{ r: 8, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               )}
             </div>
-          </Card>
+          </div>
 
           {/* AI Symptom Detection Card */}
-          <Card className="p-6 rounded-3xl border-0 shadow-sm bg-white hover:shadow-md transition-shadow flex flex-col">
-            <h3 className="text-lg font-serif text-stone-900 mb-1 flex items-center gap-2">
+          <div className="p-6 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors flex flex-col">
+            <h3 className="text-lg font-serif text-stone-900 dark:text-zinc-100 mb-1 flex items-center gap-2">
               <AlertCircle className="w-5 h-5 text-rose-500" /> Clinical Patterns
             </h3>
-            <p className="text-stone-500 text-sm mb-6">AI analysis of your recent journal entries and interactions.</p>
+            <p className="text-stone-500 dark:text-zinc-400 text-sm mb-6">AI analysis of your recent journal entries and interactions.</p>
             
             <div className="flex flex-wrap gap-2 mt-auto">
               {symptoms.map((sym, i) => (
-                <span key={i} className="px-3 py-1.5 bg-rose-50 text-rose-700 rounded-xl text-sm font-medium border border-rose-100 shadow-sm">
+                <span key={i} className={`px-3 py-1.5 rounded-xl text-sm font-medium shadow-sm transition-colors border ${sym === 'AI Daily Limit Reached - Come back tomorrow!' ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900' : 'bg-rose-50 text-rose-700 border-rose-100 dark:bg-rose-950/30 dark:text-rose-400 dark:border-rose-900'}`}>
                   {sym}
                 </span>
               ))}
             </div>
-          </Card>
+          </div>
         </div>
 
         {/* ROW 3: JOURNEY ANALYTICS */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="p-8 rounded-3xl border-0 shadow-sm bg-white relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
-              <BarChart3 className="w-32 h-32 text-emerald-900" />
+          <div className="p-8 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-5 dark:opacity-10 pointer-events-none">
+              <BarChart3 className="w-32 h-32 text-emerald-900 dark:text-emerald-500" />
             </div>
-            <h3 className="text-xl font-serif text-stone-900 mb-1 relative z-10">Therapeutic Progress</h3>
-            <p className="text-stone-500 text-sm mb-8 relative z-10">Modules and exercises completed over time.</p>
+            <h3 className="text-xl font-serif text-stone-900 dark:text-zinc-100 mb-1 relative z-10">Therapeutic Progress</h3>
+            <p className="text-stone-500 dark:text-zinc-400 text-sm mb-8 relative z-10">Modules and exercises completed over time.</p>
             
             <div className="space-y-6 relative z-10">
+              {/* CBT BAR */}
               <div>
                 <div className="flex justify-between items-end mb-2">
-                  <span className="text-sm font-bold text-blue-800 flex items-center gap-2"><Brain className="w-4 h-4"/> CBT</span>
-                  <span className="text-xs font-medium text-stone-500">{analytics.cbt} completed</span>
+                  <span className="text-sm font-bold text-blue-800 dark:text-blue-400 flex items-center gap-2"><Brain className="w-4 h-4"/> CBT</span>
+                  <span className="text-xs font-medium text-stone-500 dark:text-zinc-500">{analytics.cbt} completed</span>
                 </div>
-                <div className="h-3 w-full bg-blue-50 rounded-full overflow-hidden">
+                <div className="h-3 w-full bg-blue-50 dark:bg-blue-950/30 rounded-full overflow-hidden">
                   <motion.div initial={{ width: 0 }} animate={{ width: `${(analytics.cbt / maxModule) * 100}%` }} transition={{ duration: 1, ease: "easeOut" }} className="h-full bg-blue-500 rounded-full" />
                 </div>
               </div>
+              
+              {/* DBT BAR */}
               <div>
                 <div className="flex justify-between items-end mb-2">
-                  <span className="text-sm font-bold text-purple-800 flex items-center gap-2"><Users className="w-4 h-4"/> DBT</span>
-                  <span className="text-xs font-medium text-stone-500">{analytics.dbt} completed</span>
+                  <span className="text-sm font-bold text-purple-800 dark:text-purple-400 flex items-center gap-2"><Users className="w-4 h-4"/> DBT</span>
+                  <span className="text-xs font-medium text-stone-500 dark:text-zinc-500">{analytics.dbt} completed</span>
                 </div>
-                <div className="h-3 w-full bg-purple-50 rounded-full overflow-hidden">
+                <div className="h-3 w-full bg-purple-50 dark:bg-purple-950/30 rounded-full overflow-hidden">
                   <motion.div initial={{ width: 0 }} animate={{ width: `${(analytics.dbt / maxModule) * 100}%` }} transition={{ duration: 1, delay: 0.2, ease: "easeOut" }} className="h-full bg-purple-500 rounded-full" />
                 </div>
               </div>
+              
+              {/* ACT BAR */}
               <div>
                 <div className="flex justify-between items-end mb-2">
-                  <span className="text-sm font-bold text-emerald-800 flex items-center gap-2"><Leaf className="w-4 h-4"/> ACT</span>
-                  <span className="text-xs font-medium text-stone-500">{analytics.act} completed</span>
+                  <span className="text-sm font-bold text-emerald-800 dark:text-emerald-400 flex items-center gap-2"><Leaf className="w-4 h-4"/> ACT</span>
+                  <span className="text-xs font-medium text-stone-500 dark:text-zinc-500">{analytics.act} completed</span>
                 </div>
-                <div className="h-3 w-full bg-emerald-50 rounded-full overflow-hidden">
+                <div className="h-3 w-full bg-emerald-50 dark:bg-emerald-950/30 rounded-full overflow-hidden">
                   <motion.div initial={{ width: 0 }} animate={{ width: `${(analytics.act / maxModule) * 100}%` }} transition={{ duration: 1, delay: 0.4, ease: "easeOut" }} className="h-full bg-emerald-500 rounded-full" />
                 </div>
               </div>
             </div>
-          </Card>
+          </div>
 
           <div className="grid grid-rows-2 gap-6">
-            <Card className="p-6 rounded-3xl border-0 shadow-sm bg-gradient-to-br from-stone-800 to-stone-900 text-white flex items-center justify-between">
+            <div className="p-6 rounded-3xl border border-stone-800 dark:border-zinc-800 shadow-sm bg-gradient-to-br from-stone-800 to-stone-900 dark:from-zinc-800 dark:to-zinc-900 text-white flex items-center justify-between transition-colors">
               <div>
-                <p className="text-stone-400 text-sm font-medium mb-1 uppercase tracking-widest">Journal Entries</p>
+                <p className="text-stone-400 dark:text-zinc-400 text-sm font-medium mb-1 uppercase tracking-widest">Journal Entries</p>
                 <h3 className="text-4xl font-serif">{analytics.journal}</h3>
-                <p className="text-stone-400 text-xs mt-2">Reflections captured</p>
+                <p className="text-stone-400 dark:text-zinc-500 text-xs mt-2">Reflections captured</p>
               </div>
-              <div className="w-16 h-16 rounded-2xl bg-stone-700/50 flex items-center justify-center border border-stone-600">
-                <BookOpen className="w-8 h-8 text-stone-300" />
+              <div className="w-16 h-16 rounded-2xl bg-stone-700/50 dark:bg-zinc-700/50 flex items-center justify-center border border-stone-600 dark:border-zinc-600">
+                <BookOpen className="w-8 h-8 text-stone-300 dark:text-zinc-300" />
               </div>
-            </Card>
+            </div>
 
-            <Card className="p-6 rounded-3xl border-0 shadow-sm bg-gradient-to-br from-teal-50 to-teal-100 flex items-center justify-between border-teal-200">
+            <div className="p-6 rounded-3xl border border-teal-200 dark:border-teal-900/50 shadow-sm bg-gradient-to-br from-teal-50 to-teal-100 dark:from-teal-950/20 dark:to-teal-900/30 flex items-center justify-between transition-colors">
               <div>
-                <p className="text-teal-700 text-sm font-medium mb-1 uppercase tracking-widest">SoulSpark AI</p>
-                <h3 className="text-4xl font-serif text-teal-900">{analytics.chatInteractions}</h3>
-                <p className="text-teal-600 text-xs mt-2">Therapy chat interactions</p>
+                <p className="text-teal-700 dark:text-teal-400 text-sm font-medium mb-1 uppercase tracking-widest">SoulSpark AI</p>
+                <h3 className="text-4xl font-serif text-teal-900 dark:text-teal-100">{analytics.chatInteractions}</h3>
+                <p className="text-teal-600 dark:text-teal-500 text-xs mt-2">Therapy sessions completed</p>
               </div>
-              <div className="w-16 h-16 rounded-2xl bg-white flex items-center justify-center shadow-sm border border-teal-200">
-                <MessageSquare className="w-8 h-8 text-teal-600" />
+              <div className="w-16 h-16 rounded-2xl bg-white dark:bg-zinc-900 flex items-center justify-center shadow-sm border border-teal-200 dark:border-teal-900/50 transition-colors">
+                <MessageSquare className="w-8 h-8 text-teal-600 dark:text-teal-500" />
               </div>
-            </Card>
+            </div>
           </div>
         </div>
 

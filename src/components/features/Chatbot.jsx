@@ -1,239 +1,261 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Sparkles, RefreshCw, Send, BookOpen, ShieldAlert, BrainCircuit, Bot
-} from 'lucide-react';
-// IMPORTANT FIX: Importing from the new separated Service file
-import { ClinicalService } from "../../lib/supabaseService"; 
-import Card from '../common/Card';
+import { Send, Sparkles, User, Bot, CheckCircle, ArrowRight, StopCircle } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { supabase } from '../../lib/supabaseClient';
+import { ClinicalService } from '../../lib/supabaseService';
 
-const Chatbot = ({ setView, userId }) => {
-  const [messages, setMessages] = useState([
-    { 
-      id: 1, 
-      sender: 'bot', 
-      text: "Hi there, I'm **SoulSpark**. I'm here to support you on your wellness journey.\n\nI'm an AI companion trained in **CBT**, **DBT**, and **ACT**. How are you feeling right now?" 
-    }
-  ]);
+const Chatbot = ({ setView }) => {
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [userId, setUserId] = useState(null);
+  const [isInitializing, setIsInitializing] = useState(true);
   
-  const [isCBTMode, setIsCBTMode] = useState(false);
-  const [cbtStep, setCbtStep] = useState("Intake");
-  const [sessionNumber, setSessionNumber] = useState(1);
-  const [homeworkStatus, setHomeworkStatus] = useState("None");
+  // SESSION TRACKING STATE
+  const [sessionDayNumber, setSessionDayNumber] = useState(1);
+  const [dailySessionIndex, setDailySessionIndex] = useState(1);
+  const [sessionStartTime, setSessionStartTime] = useState(new Date());
+  const [isSafetyFlagged, setIsSafetyFlagged] = useState(false);
+  const [isSessionComplete, setIsSessionComplete] = useState(false);
 
+  // MODAL STATE
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  
   const messagesEndRef = useRef(null);
 
-  // --- HELPER: RENDER BOLD TEXT ---
-  // Transforms **text** into <strong> tags for a premium look
-  const formatMessage = (text) => {
-    return text.split('\n').map((line, i) => {
-      const parts = line.split(/(\*\*.*?\*\*)/g);
-      return (
-        <p key={i} className="mb-2 last:mb-0">
-          {parts.map((part, j) => 
-            part.startsWith('**') && part.endsWith('**') 
-              ? <strong key={j} className="font-bold text-teal-900 drop-shadow-sm">{part.slice(2, -2)}</strong> 
-              : part
-          )}
-        </p>
-      );
-    });
-  };
-  
   const scrollToBottom = () => {
-    setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, 100);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
-  useEffect(scrollToBottom, [messages, isTyping]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isTyping) return;
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading, isSessionComplete]);
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setUserId(user.id);
+        const dayNumber = await ClinicalService.getUserSessionNumber(user.id);
+        setSessionDayNumber(dayNumber);
+
+        const history = await ClinicalService.getTodayChatHistory(user.id);
+        
+        if (history && history.length > 0) {
+          setMessages(history);
+          let completedSessionsToday = 0;
+          let isCurrentlyLocked = false;
+
+          history.forEach(msg => {
+            if (msg.text.includes("SESSION_SYSTEM_FLAG:COMPLETED")) {
+              completedSessionsToday++;
+              isCurrentlyLocked = true;
+            }
+            if (msg.text.includes("SESSION_SYSTEM_FLAG:STARTED_NEW")) {
+              isCurrentlyLocked = false;
+            }
+          });
+
+          setDailySessionIndex(Math.min(completedSessionsToday + 1, 3));
+          setIsSessionComplete(isCurrentlyLocked);
+        } else {
+          const greeting = { id: 'init', sender: 'bot', text: `Welcome to Day ${dayNumber}, Session 1. I'm ready to listen whenever you are.` };
+          setMessages([greeting]);
+          await ClinicalService.saveChatMessage(user.id, 'bot', greeting.text);
+        }
+      }
+      setIsInitializing(false);
+    };
+    loadHistory();
+  }, []);
+
+  const handleSend = async (e) => {
+    e?.preventDefault();
+    if (!input.trim() || !userId || isSafetyFlagged || isSessionComplete) return;
 
     const userText = input.trim();
-    const userMsg = { id: Date.now(), sender: 'user', text: userText };
-    
-    setMessages(prev => [...prev, userMsg]);
     setInput('');
-    setIsTyping(true);
+    
+    const newUserMsg = { id: Date.now().toString(), sender: 'user', text: userText };
+    setMessages(prev => [...prev, newUserMsg]);
+    await ClinicalService.saveChatMessage(userId, 'user', userText);
+    
+    setIsLoading(true);
 
     try {
-      if (isCBTMode) {
-        const currentState = {
-          session_number: sessionNumber,
-          current_cbt_step: cbtStep,
-          homework_status: homeworkStatus,
-          user_input: userText
-        };
+      const sessionStatePayload = {
+        session_number: sessionDayNumber, 
+        daily_index: dailySessionIndex,
+        start_time: sessionStartTime.toISOString(),
+        current_time: new Date().toISOString(),
+        user_input: userText
+      };
 
-        const aiResponse = await ClinicalService.processCBTInteraction(currentState);
+      const aiResponse = await ClinicalService.processAdvancedTherapyChat(sessionStatePayload, messages, userId);
+      
+      if (aiResponse.safety_flag) setIsSafetyFlagged(true);
 
-        if (aiResponse.safety_flag) {
-          setMessages(prev => [...prev, { 
-            id: Date.now() + 1, sender: 'bot', text: aiResponse.response_text, isCrisis: true 
-          }]);
-          setView('crisis'); 
-          return;
-        }
+      const newBotMsg = { id: (Date.now() + 1).toString(), sender: 'bot', text: aiResponse.chat_response || "I am processing..." };
+      setMessages(prev => [...prev, newBotMsg]);
+      await ClinicalService.saveChatMessage(userId, 'bot', newBotMsg.text);
 
-        setMessages(prev => [...prev, { 
-          id: Date.now() + 1, sender: 'bot', text: aiResponse.response_text, homework: aiResponse.homework_assigned
-        }]);
+      if (aiResponse.dashboard_updates?.wellbeing_score) {
+        let normalizedScore = Math.ceil(aiResponse.dashboard_updates.wellbeing_score / 2);
+        await ClinicalService.updateDailyWellness(userId, new Date().toLocaleDateString('en-CA'), { mood_rating: normalizedScore });
+      }
 
-        setCbtStep(aiResponse.updated_cbt_step);
-        if (aiResponse.homework_assigned) setHomeworkStatus("Pending");
-      } else {
-        const aiResponseText = await ClinicalService.processGeneralChat(userText, messages, userId);
-        setMessages(prev => [...prev, { id: Date.now() + 1, sender: 'bot', text: aiResponseText }]);
+      if (aiResponse.session_meta?.session_status === "COMPLETED") {
+          triggerSessionEnd();
       }
     } catch (error) {
       console.error("Chat Error:", error);
-      setMessages(prev => [...prev, { 
-        id: Date.now() + 1, sender: 'bot', text: "I'm having a little trouble connecting to my **logic core**. Let's take a deep breath and try again." 
-      }]);
     } finally {
-      setIsTyping(false);
+      setIsLoading(false);
     }
   };
 
+  // Triggers the modal open state
+  const handleEndClick = () => setShowConfirmModal(true);
+
+  // Actually ends the session
+  const triggerSessionEnd = async () => {
+    setIsSessionComplete(true);
+    setShowConfirmModal(false); 
+    
+    const closingText = "Session concluded. Thank you for taking the time to check in with yourself today.";
+    const closingMsg = { id: Date.now().toString(), sender: 'bot', text: closingText };
+    setMessages(prev => [...prev, closingMsg]);
+    await ClinicalService.saveChatMessage(userId, 'bot', closingText);
+
+    // CRITICAL: Dashboard looks for this flag to increase the session count
+    await ClinicalService.saveChatMessage(userId, 'bot', `[System: SESSION_SYSTEM_FLAG:COMPLETED_SESSION_${dailySessionIndex}]`);
+  };
+
+  const handleStartNextSession = async () => {
+    if (dailySessionIndex >= 3) return;
+    const nextIndex = dailySessionIndex + 1;
+    setDailySessionIndex(nextIndex);
+    setIsSessionComplete(false);
+    setSessionStartTime(new Date());
+
+    await ClinicalService.saveChatMessage(userId, 'user', `[System: SESSION_SYSTEM_FLAG:STARTED_NEW_SESSION_${nextIndex}]`);
+    const nextGreeting = { id: Date.now().toString(), sender: 'bot', text: `Welcome back to Session ${nextIndex}. How are you feeling right now?` };
+    setMessages(prev => [...prev, nextGreeting]);
+    await ClinicalService.saveChatMessage(userId, 'bot', nextGreeting.text);
+  };
+
+  const formatText = (text) => {
+    if (!text || text.includes('SESSION_SYSTEM_FLAG')) return null;
+    return text.split(/(\*\*.*?\*\*)/).map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={i} className="font-bold">{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+  };
+
+  if (isInitializing) return (
+    <div className="flex-1 flex items-center justify-center p-8 text-stone-400 dark:text-zinc-500">
+      <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+
   return (
-    <div className="h-[calc(100vh-80px)] max-w-6xl mx-auto p-4 flex gap-6">
+    <div className="flex flex-col h-[85vh] max-w-4xl mx-auto p-4 md:p-8 animate-fade-in pb-24 relative">
       
-      {/* SIDEBAR */}
-      <div className="hidden lg:flex w-80 flex-col gap-4">
-        <Card className="flex-1 bg-white border-none shadow-xl shadow-stone-200/40 rounded-[2rem] p-6">
-          <h3 className="font-serif text-xl text-stone-800 mb-6 flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-teal-500" /> Therapy Tools
-          </h3>
-          
-          <div className="space-y-4">
-            <button 
-              onClick={() => setIsCBTMode(!isCBTMode)}
-              className={`w-full text-left p-4 rounded-2xl transition-all duration-300 flex items-center justify-between group border ${
-                isCBTMode 
-                ? 'bg-teal-900 text-white border-teal-900 shadow-lg shadow-teal-900/20' 
-                : 'bg-stone-50 text-stone-700 border-stone-100 hover:border-teal-300 hover:bg-teal-50/50'
-              }`}
-            >
-              <div className="flex items-center gap-3 font-medium">
-                <BrainCircuit className={`w-5 h-5 ${isCBTMode ? 'text-teal-300' : 'text-stone-400 group-hover:text-teal-600'}`} /> 
-                Structured CBT
-              </div>
-              <div className={`w-3 h-3 rounded-full ${isCBTMode ? 'bg-teal-400 animate-pulse' : 'bg-stone-300'}`} />
-            </button>
-
-            <button onClick={() => setView('crisis')} className="w-full text-left p-4 rounded-2xl bg-stone-50 hover:bg-red-50 text-stone-700 hover:text-red-700 transition-colors border border-stone-100 flex items-center gap-3 font-medium">
-              <ShieldAlert className="w-5 h-5 text-red-400" /> Crisis Support
-            </button>
+      {/* HEADER */}
+      <div className="flex items-center justify-between mb-4 pb-4 border-b border-stone-200 dark:border-zinc-800">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-emerald-100 dark:bg-emerald-900/30 rounded-xl flex items-center justify-center">
+            <Sparkles className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
           </div>
-
-          <AnimatePresence>
-            {isCBTMode && (
-              <motion.div 
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                className="mt-8 pt-8 border-t border-stone-100"
-              >
-                <h3 className="font-serif text-xs font-bold text-stone-400 mb-4 uppercase tracking-widest">Progress</h3>
-                <div className="space-y-3">
-                  {['Intake', 'Identify', 'Awareness', 'Patterns', 'Reframe'].map((step) => (
-                    <div key={step} className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${cbtStep === step ? 'bg-teal-500 animate-ping' : 'bg-stone-200'}`} />
-                      <span className={`text-sm ${cbtStep === step ? 'text-teal-800 font-bold' : 'text-stone-400'}`}>{step}</span>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </Card>
+          <div>
+            <h2 className="text-xl font-serif text-stone-800 dark:text-zinc-100 flex items-center gap-2">
+              Day {sessionDayNumber} Session {dailySessionIndex}/3
+            </h2>
+          </div>
+        </div>
+        
+        {!isSessionComplete && !isSafetyFlagged && (
+          <button onClick={handleEndClick} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-stone-600 hover:text-emerald-700 dark:text-zinc-400 dark:hover:text-emerald-400 bg-stone-100 dark:bg-zinc-800 rounded-lg transition-all">
+            <StopCircle className="w-4 h-4" /> End Session
+          </button>
+        )}
       </div>
 
-      {/* CHAT AREA */}
-      <div className="flex-1 flex flex-col bg-[#fcfcfc] rounded-[2.5rem] shadow-xl shadow-stone-200/50 border border-stone-100 overflow-hidden relative">
-        <div className="px-8 py-5 border-b border-stone-100 flex items-center justify-between bg-white/80 backdrop-blur-md sticky top-0 z-10">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center border border-teal-200">
-              <Bot className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="font-serif font-bold text-stone-800 text-lg flex items-center gap-2">SoulSpark</h3>
-              <p className="text-xs text-stone-500 font-medium">
-                {isCBTMode ? `CBT: ${cbtStep}` : 'Always here to listen'}
-              </p>
+      {/* NEW COMBINED MODAL UI */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-zinc-900 p-8 rounded-3xl w-full max-w-sm text-center shadow-2xl border border-stone-100 dark:border-zinc-800 mx-4">
+            <h3 className="text-xl font-serif mb-4 text-stone-900 dark:text-zinc-100">End current session?</h3>
+            <div className="flex gap-4">
+              <button onClick={() => setShowConfirmModal(false)} className="flex-1 py-3 text-stone-500 dark:text-zinc-400 hover:bg-stone-50 dark:hover:bg-zinc-800 rounded-xl transition-colors">Back</button>
+              <button onClick={triggerSessionEnd} className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors">Yes, End Now</button>
             </div>
           </div>
-          <button 
-            onClick={() => setMessages([{ id: 1, sender: 'bot', text: "Let's start fresh. How can I help?" }])} 
-            className="text-stone-400 hover:text-stone-700 p-2 bg-stone-50 hover:bg-stone-100 transition-colors rounded-full"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
         </div>
+      )}
 
-        <div className="flex-1 overflow-y-auto p-8 space-y-6">
-          <AnimatePresence>
-            {messages.map((msg) => (
-              <motion.div 
-                key={msg.id} 
-                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                className={`flex w-full ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div className={`max-w-[85%] p-4 rounded-2xl shadow-sm ${
-                  msg.sender === 'user' 
-                    ? 'bg-teal-700 text-white rounded-br-none' 
-                    : 'bg-white text-stone-700 border border-stone-100 rounded-bl-none'
-                }`}>
-                  {/* Using the text formatter here */}
-                  <div className="leading-relaxed">
-                    {msg.sender === 'bot' ? formatMessage(msg.text) : msg.text}
-                  </div>
+      {/* CHAT WINDOW */}
+      <div className="flex-1 overflow-y-auto bg-white dark:bg-zinc-900 rounded-3xl shadow-sm border border-stone-100 dark:border-zinc-800 p-4 md:p-6 mb-4">
+        <div className="space-y-6">
+          {messages.map((msg, index) => {
+            const formatted = formatText(msg.text);
+            if (!formatted) return null;
+            return (
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={msg.id || index} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className="flex items-end gap-2 max-w-[85%] md:max-w-[75%]">
+                  {msg.sender === 'bot' && (
+                    <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0 mb-1 border border-emerald-200 dark:border-emerald-800">
+                      <Bot className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                  )}
+                  <div className={`p-4 rounded-2xl text-sm leading-relaxed ${msg.sender === 'user' ? 'bg-stone-800 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-br-sm' : 'bg-stone-50 dark:bg-zinc-800 text-stone-800 dark:text-zinc-200 border border-stone-100 dark:border-zinc-700 rounded-bl-sm'}`}>{formatted}</div>
+                  {msg.sender === 'user' && (
+                    <div className="w-8 h-8 rounded-full bg-stone-200 dark:bg-zinc-700 flex items-center justify-center flex-shrink-0 mb-1">
+                      <User className="w-4 h-4 text-stone-600 dark:text-zinc-300" />
+                    </div>
+                  )}
                 </div>
               </motion.div>
-            ))}
-          </AnimatePresence>
-          {isTyping && <TypingIndicator />}
+            );
+          })}
+          {isLoading && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-end gap-2">
+              <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center"><Bot className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /></div>
+              <div className="p-4 rounded-2xl bg-stone-50 dark:bg-zinc-800 border border-stone-100 dark:border-zinc-700 rounded-bl-sm flex gap-1">
+                <span className="w-2 h-2 rounded-full bg-stone-400 dark:bg-zinc-500 animate-bounce" />
+                <span className="w-2 h-2 rounded-full bg-stone-400 dark:bg-zinc-500 animate-bounce delay-100" />
+                <span className="w-2 h-2 rounded-full bg-stone-400 dark:bg-zinc-500 animate-bounce delay-200" />
+              </div>
+            </motion.div>
+          )}
+
+          {isSessionComplete && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-8 max-w-full p-6 border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl flex flex-col items-center text-center">
+              <CheckCircle className="w-10 h-10 text-emerald-500 mb-3" />
+              <h3 className="text-lg font-serif text-emerald-900 dark:text-emerald-100 mb-1">Session {dailySessionIndex} Complete</h3>
+              <p className="text-sm text-emerald-700 dark:text-emerald-300 mb-6">Great work checking in today. Take some time to process or work on your suggested homework.</p>
+              <div className="flex gap-4">
+                <button onClick={() => setView('dashboard')} className="px-6 py-2 bg-white dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-sm font-medium rounded-xl hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-colors">View Dashboard</button>
+                {dailySessionIndex < 3 && (
+                  <button onClick={handleStartNextSession} className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-colors flex items-center gap-2">Start Session {dailySessionIndex + 1} <ArrowRight className="w-4 h-4" /></button>
+                )}
+              </div>
+            </motion.div>
+          )}
           <div ref={messagesEndRef} />
         </div>
-
-        <div className="p-6 bg-white border-t border-stone-100">
-          <div className="max-w-4xl mx-auto flex items-center bg-stone-50 rounded-full border border-stone-200 p-2 focus-within:bg-white focus-within:ring-2 focus-within:ring-teal-500/20 transition-all">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="What's on your mind?"
-              className="flex-1 bg-transparent border-0 px-6 py-3 text-stone-700 focus:outline-none"
-            />
-            <button 
-              onClick={handleSend}
-              disabled={!input.trim() || isTyping}
-              className="w-12 h-12 rounded-full bg-teal-600 hover:bg-teal-700 text-white flex items-center justify-center transition-all shadow-md active:scale-95 disabled:opacity-50"
-            >
-              <Send className="w-5 h-5 ml-0.5" />
-            </button>
-          </div>
-        </div>
       </div>
+
+      {!isSessionComplete && (
+        <form onSubmit={handleSend} className="relative mt-auto">
+          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Share what's on your mind..." disabled={isLoading || isSafetyFlagged} className="w-full pl-6 pr-16 py-4 bg-white dark:bg-zinc-900 border border-stone-200 dark:border-zinc-700 text-stone-800 dark:text-zinc-100 rounded-full focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm disabled:opacity-50" />
+          <button type="submit" disabled={!input.trim() || isLoading || isSafetyFlagged} className="absolute right-2 top-2 bottom-2 aspect-square flex items-center justify-center bg-emerald-600 text-white rounded-full hover:bg-emerald-700 disabled:opacity-50"><Send className="w-5 h-5 ml-1" /></button>
+        </form>
+      )}
     </div>
   );
 };
-
-const TypingIndicator = () => (
-  <div className="flex justify-start items-center gap-2 pl-2">
-    <div className="bg-white px-4 py-3 rounded-2xl rounded-bl-none border border-stone-100 shadow-sm flex gap-1">
-      {[0, 0.1, 0.2].map((d) => (
-        <motion.div
-          key={d}
-          animate={{ y: [0, -4, 0] }}
-          transition={{ repeat: Infinity, duration: 0.6, delay: d }}
-          className="w-1.5 h-1.5 bg-teal-400 rounded-full"
-        />
-      ))}
-    </div>
-  </div>
-);
 
 export default Chatbot;

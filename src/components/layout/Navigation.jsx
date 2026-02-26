@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { Sun, ShieldAlert, Menu, X, User, LogOut, ChevronDown } from 'lucide-react';
+import { Sun, ShieldAlert, Menu, X, User, LogOut } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import Button from '../common/Button';
 
 const Navigation = ({ activeView, setView, toggleMobileMenu, isMobileMenuOpen, session }) => {
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-
   const navItems = [
     { id: 'home', label: 'Home' },
     { id: 'modules', label: 'Therapy Modules' },
@@ -16,23 +15,30 @@ const Navigation = ({ activeView, setView, toggleMobileMenu, isMobileMenuOpen, s
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    setIsProfileOpen(false);
     setView('home');
+    if (isMobileMenuOpen) toggleMobileMenu();
   };
 
+  const avatarUrl = session?.user?.user_metadata?.avatar_url;
+  const initial = session?.user?.user_metadata?.full_name?.charAt(0).toUpperCase() || session?.user?.email?.[0].toUpperCase() || 'U';
+
   return (
-    <nav className="sticky top-0 z-50 bg-stone-50/90 backdrop-blur-md border-b border-stone-200">
+    // Switched dark mode from stone-900 to a sleek zinc-950 true dark
+    <nav className="sticky top-0 z-50 bg-stone-50/90 dark:bg-zinc-950/90 backdrop-blur-md border-b border-stone-200 dark:border-zinc-800 transition-colors duration-300">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
+          
           {/* Logo */}
           <div 
             className="flex items-center gap-2 cursor-pointer" 
             onClick={() => setView('home')}
           >
-            <div className="w-10 h-10 bg-gradient-to-br from-green-200 to-orange-100 rounded-full flex items-center justify-center">
-              <Sun className="text-stone-700 w-6 h-6" />
+            <div className="w-10 h-10 bg-gradient-to-br from-emerald-200 to-teal-100 dark:from-emerald-600 dark:to-teal-800 rounded-full flex items-center justify-center transition-colors">
+              <Sun className="text-stone-700 dark:text-zinc-100 w-6 h-6" />
             </div>
-            <span className="font-serif text-2xl text-stone-800 tracking-tight font-medium">SoulSpark</span>
+            <span className="font-serif text-2xl text-stone-800 dark:text-zinc-100 tracking-tight font-medium transition-colors">
+              SoulSpark
+            </span>
           </div>
 
           {/* Desktop Nav */}
@@ -42,64 +48,45 @@ const Navigation = ({ activeView, setView, toggleMobileMenu, isMobileMenuOpen, s
                 key={item.id}
                 onClick={() => setView(item.id)}
                 className={`text-sm font-medium transition-colors ${
-                  activeView === item.id ? 'text-green-800 border-b-2 border-green-800' : 'text-stone-500 hover:text-stone-800'
+                  activeView === item.id 
+                    ? 'text-emerald-800 dark:text-emerald-400 border-b-2 border-emerald-800 dark:border-emerald-400' 
+                    : 'text-stone-500 dark:text-zinc-400 hover:text-stone-800 dark:hover:text-zinc-100'
                 }`}
               >
                 {item.label}
               </button>
             ))}
 
-            <div className="h-6 w-px bg-stone-200 mx-2" />
+            <div className="h-6 w-px bg-stone-200 dark:bg-zinc-800 mx-2 transition-colors" />
 
-            {/* User Profile Dropdown */}
+            {/* AVATAR SYNC FIX */}
             {session ? (
-              <div className="relative">
-                <button 
-                  onClick={() => setIsProfileOpen(!isProfileOpen)}
-                  className="flex items-center gap-2 p-1 pr-3 rounded-full hover:bg-stone-100 transition-all"
-                >
-                  <div className="w-8 h-8 rounded-full bg-stone-800 text-stone-50 flex items-center justify-center text-xs font-bold uppercase">
-                    {session.user.email[0]}
-                  </div>
-                  <ChevronDown className={`w-4 h-4 text-stone-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {isProfileOpen && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-stone-100 py-2 animate-in fade-in slide-in-from-top-2">
-                    <div className="px-4 py-2 border-b border-stone-50 mb-2">
-                      <p className="text-[10px] uppercase tracking-widest text-stone-400 font-bold">Logged in as</p>
-                      <p className="text-xs text-stone-800 truncate font-medium">{session.user.email}</p>
-                    </div>
-                    <button 
-                      onClick={() => { setView('dashboard'); setIsProfileOpen(false); }}
-                      className="w-full text-left px-4 py-2 text-sm text-stone-600 hover:bg-stone-50 flex items-center gap-2"
-                    >
-                      <User className="w-4 h-4" /> Profile Settings
-                    </button>
-                    <button 
-                      onClick={handleLogout}
-                      className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                    >
-                      <LogOut className="w-4 h-4" /> Sign Out
-                    </button>
-                  </div>
+              <Link 
+                to="/profile" 
+                title="Account Settings"
+                className="w-9 h-9 rounded-full bg-stone-800 dark:bg-zinc-800 text-white flex items-center justify-center text-sm font-medium hover:ring-2 hover:ring-emerald-500 transition-all overflow-hidden shadow-sm"
+              >
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="Profile" className="w-full h-full object-cover" />
+                ) : (
+                  initial
                 )}
-              </div>
+              </Link>
             ) : (
-              <Button variant="secondary" onClick={() => setView('auth')} className="py-2 px-4 text-sm">
+              <Button variant="secondary" onClick={() => setView('auth')} className="py-2 px-4 text-sm bg-white dark:bg-zinc-800 text-stone-800 dark:text-zinc-200 border border-stone-200 dark:border-zinc-700 hover:bg-stone-50 dark:hover:bg-zinc-700 transition-colors">
                 Sign Up
               </Button>
             )}
 
-            <Button variant="crisis" onClick={() => setView('crisis')} className="py-2 px-4 text-sm ml-2">
-              <ShieldAlert className="w-4 h-4" />
+            <Button variant="crisis" onClick={() => setView('crisis')} className="py-2 px-4 text-sm ml-2 bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors border-0">
+              <ShieldAlert className="w-4 h-4 mr-2" />
               Get Help
             </Button>
           </div>
 
           {/* Mobile Menu Button */}
           <div className="md:hidden">
-            <button onClick={toggleMobileMenu} className="text-stone-600">
+            <button onClick={toggleMobileMenu} className="text-stone-600 dark:text-zinc-300 transition-colors">
               {isMobileMenuOpen ? <X /> : <Menu />}
             </button>
           </div>
@@ -108,34 +95,59 @@ const Navigation = ({ activeView, setView, toggleMobileMenu, isMobileMenuOpen, s
 
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
-        <div className="md:hidden bg-white border-b border-stone-200 px-4 py-4 space-y-2">
+        <div className="md:hidden bg-white dark:bg-zinc-950 border-b border-stone-200 dark:border-zinc-800 px-4 py-4 space-y-2 transition-colors">
           {session && (
-            <div className="px-3 py-3 bg-stone-50 rounded-xl mb-4">
-              <p className="text-xs text-stone-500">{session.user.email}</p>
+            <div className="px-3 py-3 bg-stone-50 dark:bg-zinc-900 rounded-xl mb-4 transition-colors">
+              <p className="text-xs text-stone-500 dark:text-zinc-400">{session.user.email}</p>
             </div>
           )}
+          
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => { setView(item.id); toggleMobileMenu(); }}
-              className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-stone-700 hover:bg-stone-50"
+              className={`block w-full text-left px-3 py-2 rounded-md text-base font-medium transition-colors ${
+                activeView === item.id 
+                  ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-400' 
+                  : 'text-stone-700 dark:text-zinc-300 hover:bg-stone-50 dark:hover:bg-zinc-900'
+              }`}
             >
               {item.label}
             </button>
           ))}
+
+          {session && (
+            <Link
+              to="/profile"
+              onClick={toggleMobileMenu}
+              className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-stone-700 dark:text-zinc-300 hover:bg-stone-50 dark:hover:bg-zinc-900 transition-colors flex items-center gap-2"
+            >
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="Profile" className="w-6 h-6 rounded-full object-cover" />
+              ) : (
+                <User className="w-5 h-5" />
+              )}
+              Account Settings
+            </Link>
+          )}
+
+          <div className="pt-2 pb-1">
+            <div className="h-px w-full bg-stone-100 dark:bg-zinc-800 transition-colors" />
+          </div>
+
           {session ? (
             <button
               onClick={handleLogout}
-              className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-red-600 hover:bg-red-50"
+              className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors flex items-center gap-2"
             >
-              Sign Out
+              <LogOut className="w-4 h-4" /> Sign Out
             </button>
           ) : (
             <button
               onClick={() => { setView('auth'); toggleMobileMenu(); }}
-              className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-green-800"
+              className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-emerald-800 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
             >
-              Sign Up
+              Sign Up / Log In
             </button>
           )}
         </div>

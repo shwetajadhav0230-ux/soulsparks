@@ -1,5 +1,6 @@
 @import "tailwindcss";
-
+/* This enables class-based dark mode toggling in Tailwind v4 */
+@custom-variant dark (&:where(.dark, .dark *));
 /* If you need custom theme overrides in v4, you do them here: */
 @theme {
   --font-serif: "Instrument Serif", serif;

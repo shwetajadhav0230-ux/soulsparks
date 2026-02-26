@@ -2,11 +2,11 @@ import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from './lib/supabaseClient';
 
-// Layout & UI (Eager-loaded)
+// Layout & UI (Eager-loaded for immediate paint)
 import Navigation from './components/layout/Navigation';
 import Footer from './components/layout/Footer';
 
-// Main Pages (Lazy-loaded)
+// Main Pages (Lazy-loaded for performance)
 const Home = lazy(() => import('./pages/Home'));
 const Auth = lazy(() => import('./pages/Auth'));
 const Journal = lazy(() => import('./pages/Journal'));
@@ -14,16 +14,17 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Modules = lazy(() => import('./pages/Modules'));
 const Crisis = lazy(() => import('./pages/Crisis'));
 const About = lazy(() => import('./pages/About'));
+const Profile = lazy(() => import('./pages/Profile'));
 const Chatbot = lazy(() => import('./components/features/Chatbot'));
 
-// --- UNCOMMENTED: These are now active! ---
+// Module Components
 const CBTModule = lazy(() => import('./components/modules/CBT'));
 const DBTModule = lazy(() => import('./components/modules/DBT'));
 const ACTModule = lazy(() => import('./components/modules/ACT'));
 
 /**
  * AppContent Wrapper
- * Needs to be inside <Router> so we can use hooks like useLocation and useNavigate
+ * Revised with mobile-first Tailwind classes and sleek zinc-dark theme.
  */
 const AppContent = () => {
   const [session, setSession] = useState(null);
@@ -34,7 +35,6 @@ const AppContent = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // 1. Initial Session Check
     const initializeAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
@@ -43,10 +43,8 @@ const AppContent = () => {
 
     initializeAuth();
 
-    // 2. Auth State Subscription
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      // Seamless transition away from Auth once logged in
       if (session && location.pathname === '/auth') {
         navigate('/');
       }
@@ -55,29 +53,28 @@ const AppContent = () => {
     return () => subscription.unsubscribe();
   }, [location.pathname, navigate]);
 
+  // Mobile-responsive loading screen
   if (isAuthLoading) return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50">
-      <div className="w-8 h-8 border-4 border-green-200 border-t-green-800 rounded-full animate-spin" />
+    <div className="min-h-screen w-full flex items-center justify-center bg-stone-50 dark:bg-zinc-950 transition-colors duration-300">
+      <div className="w-10 h-10 md:w-12 md:h-12 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin" />
     </div>
   );
 
-  // Determine current context for styling & layout hiding
   const isCrisisMode = location.pathname === '/crisis';
   const isAuthView = location.pathname === '/auth';
 
-  // Backward Compatibility: Converts old `setView('home')` calls to `Maps('/')`
   const setView = (view) => {
     if (view === 'home') navigate('/');
     else navigate(`/${view}`);
   };
 
-  // Determine active view for Navigation highlighting 
   const currentPath = location.pathname.substring(1) || 'home';
   const activeNavView = currentPath.startsWith('modules') ? 'modules' : currentPath;
 
   return (
-    <div className={`min-h-screen font-sans transition-all duration-700 ease-in-out selection:bg-green-100 ${
-      isCrisisMode ? 'bg-orange-50' : 'bg-stone-50'
+    // Base classes: flex-col, overflow-x-hidden (prevents side-scrolling on mobile)
+    <div className={`flex flex-col min-h-screen w-full font-sans transition-colors duration-300 ease-in-out overflow-x-hidden selection:bg-emerald-100 dark:selection:bg-emerald-900/50 ${
+      isCrisisMode ? 'bg-orange-50 dark:bg-orange-950/20' : 'bg-stone-50 dark:bg-zinc-950'
     }`}>
       
       {!isCrisisMode && !isAuthView && (
@@ -90,34 +87,37 @@ const AppContent = () => {
         />
       )}
 
-      {/* Suspense handles the fallback UI while Lazy components load */}
+      {/* Main content wrapper: 
+        - Mobile: p-4 (base)
+        - Tablet: md:p-8
+        - Laptop: lg:p-12
+        - Max-width: 7xl (centered with mx-auto)
+      */}
       <Suspense fallback={
-        <div className="min-h-[60vh] flex items-center justify-center">
-          <div className="animate-pulse text-stone-400 font-serif text-xl italic">Illuminating Sanctuary...</div>
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="animate-pulse text-stone-400 dark:text-zinc-500 font-serif text-lg md:text-xl italic">
+            Illuminating Sanctuary...
+          </div>
         </div>
       }>
-        <main className={`transition-opacity duration-300 ${isCrisisMode ? 'pt-0' : 'pt-4'}`}>
+        <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 lg:px-12 py-6">
+
           <Routes>
-            {/* Public Routes */}
             <Route path="/" element={<Home setView={setView} />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/about" element={<About />} />
             <Route path="/crisis" element={<Crisis setView={setView} />} />
             
-            {/* Module Routes */}
             <Route path="/modules" element={<Modules />} />
-            
-            {/* --- UNCOMMENTED: The routes are now active! --- */}
             <Route path="/modules/cbt" element={<CBTModule />} />
             <Route path="/modules/dbt" element={<DBTModule />} />
             <Route path="/modules/act" element={<ACTModule />} />
 
-            {/* Secure Routes (Guarded by session) */}
             <Route path="/journal" element={session ? <Journal /> : <Navigate to="/auth" />} />
             <Route path="/dashboard" element={session ? <Dashboard session={session} /> : <Navigate to="/auth" />} />
             <Route path="/chat" element={session ? <Chatbot setView={setView} /> : <Navigate to="/auth" />} />
+            <Route path="/profile" element={session ? <Profile /> : <Navigate to="/auth" />} />
 
-            {/* Fallback for unknown routes */}
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </main>
@@ -128,10 +128,6 @@ const AppContent = () => {
   );
 };
 
-/**
- * Root App Component
- * Wraps everything in the Router provider
- */
 const App = () => {
   return (
     <Router>
