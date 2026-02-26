@@ -1,6 +1,6 @@
 import { supabase } from './supabaseClient'; 
 
-const aiApiKey = "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";
+const aiApiKey = "import.meta.env.VITE_AI_API_KEY";
 
 export class ClinicalService {
   
