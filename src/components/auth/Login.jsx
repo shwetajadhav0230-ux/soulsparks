@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-// DAL: Utilizing the pre-configured Supabase client
 import { supabase } from '../../lib/supabaseClient';
 import Button from '../common/Button';
 import { LogIn, Mail, Lock, Loader2, AlertCircle } from 'lucide-react';
 
 /**
  * Login Component
- * Purpose: Authenticates returning users via Supabase.
- * Implementation: Managed state for inputs, loading status, and error feedback.
+ * Purpose: Authenticates users via standard credentials or Google OAuth.
+ * Implementation: Combined state management and unified error feedback.
  */
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -15,33 +14,46 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Business Logic: Handles the sign-in process
+  // 1. HANDLER: Email/Password Authentication
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
     try {
-      // 1. Supabase Auth Call: Sign in with credentials
       const { error } = await supabase.auth.signInWithPassword({ 
         email, 
         password 
       });
-
       if (error) throw error;
-      
-      // 2. Success: The onAuthStateChange listener in App.jsx will detect 
-      // the new session and update the global UI state automatically.
     } catch (err) {
-      // 3. Error Handling: Capture and display API or network errors
       setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  // 2. HANDLER: Google OAuth Authentication
+  const handleGoogleLogin = async () => {
+    setError(null);
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          // redirectTo ensures the user returns to your dashboard after consenting
+          redirectTo: window.location.origin,
+        },
+      });
+      if (error) throw error;
+    } catch (err) {
+      console.error("Google Login Error:", err.message);
+      setError("Unable to connect with Google. Please try again.");
+    }
+  };
+
   return (
     <div className="w-full max-w-sm space-y-6">
+      {/* STANDARD LOGIN FORM */}
       <form onSubmit={handleLogin} className="space-y-4">
         {/* Email Input */}
         <div className="space-y-2">
@@ -78,7 +90,7 @@ const Login = () => {
           </div>
         </div>
 
-        {/* Error Message Display: Only shown when an error exists */}
+        {/* Unified Error Message Display */}
         {error && (
           <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 p-3 rounded-xl border border-red-100 animate-in fade-in zoom-in duration-300">
             <AlertCircle className="w-4 h-4 shrink-0" />
@@ -86,7 +98,7 @@ const Login = () => {
           </div>
         )}
 
-        {/* Submit Button with Dynamic State Feedback */}
+        {/* Email Submit Button */}
         <Button variant="primary" className="w-full py-3" disabled={loading}>
           {loading ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -96,6 +108,32 @@ const Login = () => {
           {loading ? 'Entering Sanctuary...' : 'Sign In'}
         </Button>
       </form>
+
+      {/* VISUAL DIVIDER */}
+      <div className="relative py-2">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-stone-100"></div>
+        </div>
+        <div className="relative flex justify-center text-xs uppercase">
+          <span className="bg-white px-2 text-stone-400 font-bold tracking-widest">
+            Or continue with
+          </span>
+        </div>
+      </div>
+
+      {/* GOOGLE OAUTH BUTTON */}
+      <button 
+        type="button"
+        onClick={handleGoogleLogin}
+        className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl border border-stone-200 bg-white text-stone-700 font-medium hover:bg-stone-50 transition-all shadow-sm active:scale-[0.98] group"
+      >
+        <img 
+          src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
+          className="w-5 h-5 group-hover:opacity-80" 
+          alt="Google" 
+        />
+        Sign in with Google
+      </button>
     </div>
   );
 };

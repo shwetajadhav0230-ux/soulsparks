@@ -1,357 +1,341 @@
-import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import React, { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { 
-  Activity, CheckCircle, Plus, Minus, Sun, Droplets, 
-  Download, Calendar as CalendarIcon, ChevronLeft, ChevronRight, Sparkles,
-  Brain, Users, Leaf, MessageSquare, BookOpen, BarChart3, TrendingUp, AlertCircle
+  Activity, Plus, Minus, Sun, Droplets, ChevronLeft, ChevronRight, 
+  Sparkles, TrendingUp, AlertCircle, RefreshCw, CheckCircle,
+  Lock, Download, Crown 
 } from 'lucide-react';
-import { 
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid 
-} from 'recharts';
-import Button from '../components/common/Button';
-import { supabase } from '../lib/supabaseClient';
+import { XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Area, AreaChart } from 'recharts';
 import { ClinicalService } from '../lib/supabaseService';
+import { PDFService } from '../lib/pdfService'; 
 
-const Dashboard = () => {
+const Dashboard = ({ session }) => {
+  const navigate = useNavigate();
+  const user = session?.user;
   const getTodayStr = () => new Date().toLocaleDateString('en-CA'); 
-  
+
+  // --- 1. STABLE PREMIUM GATING ---
+  const { isPremium, hasAIInsights, hasPDFReports } = useMemo(() => {
+    const tier = user?.clinical_tier || user?.user_metadata?.clinical_tier;
+    const premiumBool = user?.is_premium || user?.user_metadata?.is_premium;
+    // Strictly forced boolean to prevent Hook size errors in React
+    const premium = !!(tier === 'premium' || premiumBool === true); 
+    return { isPremium: premium, hasAIInsights: premium, hasPDFReports: premium };
+  }, [user]);
+
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
-  const [hydration, setHydration] = useState(0);
-  const [goalChecked, setGoalChecked] = useState(false);
-  const [moodToday, setMoodToday] = useState(null);
-  const [moodHistory, setMoodHistory] = useState([0,0,0,0,0,0,0]); 
-  
-  const [analytics, setAnalytics] = useState({ cbt: 0, dbt: 0, act: 0, chatInteractions: 0, journal: 0 });
-  const [symptoms, setSymptoms] = useState(["Analyzing..."]); 
+  const [wellness, setWellness] = useState({ hydration: 0, goalCompleted: false, moodToday: null, isSyncing: false });
+  const [moodHistory, setMoodHistory] = useState([]); 
+  const [analytics, setAnalytics] = useState({ chatInteractions: 0, journal: 0 });
+  const [symptoms, setSymptoms] = useState([]); 
   const [loading, setLoading] = useState(true);
-  const [userName, setUserName] = useState('');
+  const [isPatternsLoading, setIsPatternsLoading] = useState(false); // New state for AI card
+  const [showChart, setShowChart] = useState(false);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [pdfError, setPdfError] = useState(null);
 
+  const clinicalTrend = useMemo(() => {
+    const valid = moodHistory.filter(v => v > 0);
+    if (valid.length < 2) return { label: "Establishing Baseline", color: "text-stone-400" };
+    const avg = valid.reduce((a, b) => a + b, 0) / valid.length;
+    const latest = valid[valid.length - 1];
+    if (latest > avg) return { label: "Trending Upward", color: "text-emerald-500", icon: Sparkles };
+    if (latest < avg) return { label: "Extra Care Needed", color: "text-amber-500", icon: AlertCircle };
+    return { label: "Emotional Stability", color: "text-blue-500", icon: TrendingUp };
+  }, [moodHistory]);
+
+  // --- 2. DATA SYNC LOGIC ---
   useEffect(() => {
-    const initDashboard = async () => {
+    const loadDashboardData = async () => {
+      if (!user) return;
       setLoading(true);
+      setShowChart(false);
+      setSymptoms([]); 
+      setIsPatternsLoading(isPremium); // Only show loading if they can actually see insights
+
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError || !user) throw new Error("No user found");
+        const [dailyStats, history, stats] = await Promise.all([
+          ClinicalService.getDailyWellness(user.id, selectedDate),
+          ClinicalService.getWellnessHistory(user.id, 7),
+          ClinicalService.getDashboardAnalytics(user.id)
+        ]);
 
-        const name = user.user_metadata?.full_name?.split(' ')[0] || 'there';
-        setUserName(name);
+        setWellness({
+          hydration: dailyStats?.hydration_count || 0,
+          goalCompleted: dailyStats?.goal_completed || false,
+          moodToday: dailyStats?.mood_rating || null,
+          isSyncing: false
+        });
 
-        const dailyStats = await ClinicalService.getDailyWellness(user.id, selectedDate);
-        setHydration(dailyStats.hydration_count || 0);
-        setGoalChecked(dailyStats.goal_completed || false);
-        setMoodToday(dailyStats.mood_rating || null);
+        setMoodHistory(history.map(h => h.mood_rating || 0));
+        setAnalytics(stats);
 
-        // Fetch all therapeutic progress (CBT, DBT, ACT)
-        ClinicalService.getDashboardAnalytics(user.id).then(setAnalytics);
-        ClinicalService.analyzeUserPatterns(user.id).then(setSymptoms);
-
-        const history = await ClinicalService.getWellnessHistory(user.id, 7);
-        const ratings = history.map(h => h.mood_rating || 0);
-        const paddedRatings = [...Array(Math.max(0, 7 - ratings.length)).fill(0), ...ratings];
-        setMoodHistory(paddedRatings.slice(-7));
-
+        // Fetch patterns separately to update the UI faster
+        if (isPremium) {
+           const patterns = await ClinicalService.analyzeUserPatterns(user.id, selectedDate);
+           setSymptoms(patterns);
+        }
       } catch (err) {
-        console.error("Dashboard Init Error:", err);
+        console.error("Dashboard Sync Error:", err);
       } finally {
         setLoading(false);
+        setIsPatternsLoading(false);
+        setTimeout(() => setShowChart(true), 400); // Wait for DOM to stabilize
       }
     };
+    loadDashboardData();
+  }, [selectedDate, user, isPremium]);
 
-    initDashboard();
-  }, [selectedDate]);
-
-  const handleExport = async () => {
+  const updateWellnessMetric = async (updates) => {
+    if (!user) return;
+    setWellness(prev => ({ ...prev, ...updates, isSyncing: true }));
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const result = await ClinicalService.exportUserData(user.id);
-      if (result.success) {
-        const blob = new Blob([result.data], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `soulspark_wellness_log_${new Date().toISOString().slice(0,10)}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } else {
-        alert(`Export skipped: ${result.error}`);
+      await ClinicalService.updateDailyWellness(user.id, selectedDate, {
+        hydration_count: updates.hydration ?? wellness.hydration,
+        goal_completed: updates.goalCompleted ?? wellness.goalCompleted,
+        mood_rating: updates.moodToday ?? wellness.moodToday
+      });
+      if (updates.moodToday) {
+        const freshHistory = await ClinicalService.getWellnessHistory(user.id, 7);
+        setMoodHistory(freshHistory.map(h => h.mood_rating || 0));
       }
-    } catch (error) {
-      console.error("Export Error:", error);
+    } finally {
+      setWellness(prev => ({ ...prev, isSyncing: false }));
     }
   };
 
-  const handleMoodSelect = async (rating) => {
-    setMoodToday(rating);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      await ClinicalService.updateDailyWellness(user.id, selectedDate, { mood_rating: rating });
-      const history = await ClinicalService.getWellnessHistory(user.id, 7);
-      const ratings = history.map(h => h.mood_rating || 0);
-      const paddedRatings = [...Array(Math.max(0, 7 - ratings.length)).fill(0), ...ratings];
-      setMoodHistory(paddedRatings.slice(-7));
+  const handleDownloadPDF = async () => {
+    if (!hasPDFReports) { navigate('/pricing'); return; }
+    setPdfError(null);
+    try {
+      setIsGeneratingPDF(true);
+      const userName = user?.user_metadata?.full_name || "Valued Member";
+      await PDFService.generateClinicalReport(user.id, userName); 
+    } catch (err) {
+      setPdfError(err.message || "Failed to generate report.");
+      setTimeout(() => setPdfError(null), 6000);
+    } finally {
+      setIsGeneratingPDF(false);
     }
   };
 
-  const toggleGoal = async () => {
-    const newStatus = !goalChecked;
-    setGoalChecked(newStatus);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      await ClinicalService.updateDailyWellness(user.id, selectedDate, { goal_completed: newStatus });
-    }
-  };
-
-  const updateWater = async (change) => {
-    const newCount = Math.max(0, hydration + change);
-    setHydration(newCount);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      await ClinicalService.updateDailyWellness(user.id, selectedDate, { hydration_count: newCount });
-    }
-  };
-
-  const changeDate = (days) => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + days);
-    setSelectedDate(d.toLocaleDateString('en-CA'));
-  };
-
-  const isToday = selectedDate === getTodayStr();
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return "Good morning";
-    if (hour < 18) return "Good afternoon";
-    return "Good evening";
-  };
-  const formatDateDisplay = (dateStr) => new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  
-  const getMoodColor = (rating) => {
-    if (!rating || rating === 0) return 'bg-stone-50 dark:bg-zinc-800 text-stone-400 dark:text-zinc-500 hover:bg-stone-100 dark:hover:bg-zinc-700';
-    if (rating >= 4) return 'bg-emerald-400 dark:bg-emerald-500 text-white shadow-md ring-4 ring-stone-50 dark:ring-zinc-900';
-    if (rating === 3) return 'bg-amber-400 dark:bg-amber-500 text-white shadow-md ring-4 ring-stone-50 dark:ring-zinc-900';
-    return 'bg-indigo-400 dark:bg-indigo-500 text-white shadow-md ring-4 ring-stone-50 dark:ring-zinc-900';
-  };
-
-  // Dynamically calculate the maximum value to properly scale the progress bars
-  const maxModule = Math.max(analytics.cbt, analytics.dbt, analytics.act, 1);
-
-  const chartData = moodHistory.map((val, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    return {
-      name: d.toLocaleDateString('en-US', { weekday: 'short' }),
-      mood: val > 0 ? val : null 
-    };
-  });
-
-  const validPoints = moodHistory.filter(v => v > 0);
-  const averageMood = validPoints.length > 0 
-    ? (validPoints.reduce((a, b) => a + b, 0) / validPoints.length).toFixed(1) 
-    : '-';
+  const chartData = useMemo(() => {
+    if (!moodHistory.length) return [];
+    return moodHistory.map((val, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (moodHistory.length - 1 - i));
+      return { name: d.toLocaleDateString('en-US', { weekday: 'short' }), mood: val > 0 ? val : null };
+    });
+  }, [moodHistory]);
 
   return (
-    <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-8 animate-fade-in pb-20">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6 animate-fade-in pb-24 transition-colors duration-500">
       
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-stone-200 dark:border-zinc-800 pb-6 transition-colors">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-stone-200 dark:border-zinc-800 pb-8">
         <div className="space-y-2">
-          <p className="text-stone-500 dark:text-zinc-400 font-medium flex items-center gap-2 transition-colors">
-            <Sparkles className="w-4 h-4 text-amber-500" /> {getGreeting()}, {userName}
-          </p>
-          <h1 className="text-3xl md:text-4xl font-serif text-stone-800 dark:text-zinc-100 tracking-tight transition-colors">Your Wellness Space</h1>
-          
-          <div className="flex items-center gap-1 mt-4 bg-white dark:bg-zinc-900 p-1 rounded-2xl shadow-sm border border-stone-200 dark:border-zinc-800 w-fit transition-colors">
-            <button onClick={() => changeDate(-1)} className="p-2 hover:bg-stone-100 dark:hover:bg-zinc-800 rounded-xl transition-colors">
-              <ChevronLeft className="w-4 h-4 text-stone-600 dark:text-zinc-400" />
-            </button>
-            <div className="relative flex items-center gap-2 px-3 py-1 font-medium text-stone-700 dark:text-zinc-200 transition-colors">
-              <CalendarIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-500" />
-              <span>{isToday ? 'Today' : formatDateDisplay(selectedDate)}</span>
-              <input type="date" value={selectedDate} max={getTodayStr()} onChange={(e) => setSelectedDate(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
-            </div>
-            <button onClick={() => changeDate(1)} disabled={isToday} className={`p-2 rounded-xl transition-colors ${isToday ? 'opacity-30 cursor-not-allowed' : 'hover:bg-stone-100 dark:hover:bg-zinc-800'}`}>
-              <ChevronRight className="w-4 h-4 text-stone-600 dark:text-zinc-400" />
-            </button>
+          <div className="flex items-center gap-3">
+            <p className="text-stone-500 dark:text-zinc-400 font-medium text-sm">Sanctuary Analytics</p>
+            {isPremium && (
+              <span className="flex items-center gap-1.5 px-3 py-1 text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded-full font-black uppercase tracking-widest shadow-sm">
+                <Crown className="w-3 h-3" /> SoulSpark Pro
+              </span>
+            )}
+            {(wellness.isSyncing || loading) && (
+              <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 2, ease: "linear" }}>
+                <RefreshCw className="w-3 h-3 text-emerald-500" />
+              </motion.div>
+            )}
           </div>
+          <h1 className="text-4xl sm:text-5xl font-serif text-stone-900 dark:text-zinc-100">
+            How is your <span className="italic text-emerald-600 font-medium">Soul</span> {selectedDate === getTodayStr() ? "today" : "then"}?
+          </h1>
         </div>
 
-        <Button onClick={handleExport} variant="outline" className="flex items-center gap-2 text-stone-600 dark:text-zinc-300 bg-white dark:bg-zinc-900 shadow-sm hover:bg-stone-50 dark:hover:bg-zinc-800 rounded-xl px-4 py-2 border-stone-200 dark:border-zinc-800 transition-colors">
-          <Download className="w-4 h-4" /> Export Data
-        </Button>
+        <div className="flex items-center gap-3 bg-white dark:bg-zinc-900 p-1.5 rounded-2xl shadow-sm border border-stone-200 dark:border-zinc-800">
+           <button onClick={() => {
+              const d = new Date(selectedDate);
+              d.setDate(d.getDate() - 1);
+              setSelectedDate(d.toLocaleDateString('en-CA'));
+           }} className="p-2 hover:bg-stone-50 dark:hover:bg-zinc-800 rounded-xl transition-all">
+             <ChevronLeft className="w-5 h-5 text-stone-400" />
+           </button>
+           <span className="font-bold text-stone-700 dark:text-zinc-200 px-2 min-w-[100px] text-center uppercase tracking-tighter text-sm">
+             {selectedDate === getTodayStr() ? "Today" : selectedDate}
+           </span>
+           <button 
+             disabled={selectedDate === getTodayStr()}
+             onClick={() => {
+              const d = new Date(selectedDate);
+              d.setDate(d.getDate() + 1);
+              setSelectedDate(d.toLocaleDateString('en-CA'));
+           }} className="p-2 hover:bg-stone-50 dark:hover:bg-zinc-800 rounded-xl transition-all disabled:opacity-20">
+             <ChevronRight className="w-5 h-5 text-stone-400" />
+           </button>
+        </div>
       </div>
 
-      <div className={`transition-opacity duration-300 ${loading ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
-        
-        {/* ROW 1: DAILY TRACKERS */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <div className="p-6 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors">
-            <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 dark:text-zinc-100 mb-6">
-              <Sun className="w-5 h-5 text-amber-500" /> Daily Mood
-            </h3>
-            <div className="flex justify-between gap-2">
-              {[1, 2, 3, 4, 5].map((rating) => (
-                <motion.button key={rating} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleMoodSelect(rating)}
-                  className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold transition-all duration-300 ${getMoodColor(moodToday === rating ? rating : 0)}`}
-                >
-                  {rating}
-                </motion.button>
-              ))}
-            </div>
-          </div>
-
-          <div className="p-6 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors flex justify-between items-center">
-            <div>
-              <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 dark:text-zinc-100 mb-1">
-                <Droplets className="w-5 h-5 text-cyan-500" /> Hydration
-              </h3>
-              <p className="text-sm text-stone-400 dark:text-zinc-500">Glasses today</p>
-            </div>
-            <div className="flex items-center gap-4 bg-stone-50 dark:bg-zinc-950 p-2 rounded-2xl border border-stone-100 dark:border-zinc-800 transition-colors">
-              <button onClick={() => updateWater(-1)} className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-800 text-stone-500 dark:text-zinc-400 hover:text-stone-800 dark:hover:text-zinc-100 shadow-sm flex items-center justify-center transition-colors"><Minus className="w-5 h-5" /></button>
-              <span className="text-2xl font-bold text-cyan-600 dark:text-cyan-500 w-6 text-center">{hydration}</span>
-              <button onClick={() => updateWater(1)} className="w-10 h-10 rounded-xl bg-cyan-500 text-white shadow-sm hover:bg-cyan-600 flex items-center justify-center transition-colors"><Plus className="w-5 h-5" /></button>
-            </div>
-          </div>
-
-          <div className="p-6 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors flex flex-col justify-center">
-            <h3 className="text-lg font-semibold flex items-center gap-2 text-stone-800 dark:text-zinc-100 mb-4">
-              <Activity className="w-5 h-5 text-emerald-500" /> Daily Focus
-            </h3>
-            <motion.div whileTap={{ scale: 0.98 }} onClick={toggleGoal} className={`cursor-pointer border-2 rounded-2xl p-4 flex items-center gap-4 transition-all duration-300 ${goalChecked ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 shadow-inner' : 'border-stone-200 dark:border-zinc-700 hover:bg-stone-50 dark:hover:bg-zinc-800'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors duration-300 ${goalChecked ? 'bg-emerald-500 text-white' : 'bg-stone-100 dark:bg-zinc-800 text-stone-300 dark:text-zinc-500'}`}>
-                <CheckCircle className={`w-5 h-5 ${goalChecked ? 'opacity-100' : 'opacity-50'}`} />
-              </div>
-              <span className={`font-semibold ${goalChecked ? 'text-emerald-800 dark:text-emerald-400' : 'text-stone-600 dark:text-zinc-400'}`}>{goalChecked ? 'Goal Achieved!' : 'Mark as Done'}</span>
-            </motion.div>
-          </div>
-        </div>
-
-        {/* ROW 2: HAALAT (WELLBEING TREND) & AI SYMPTOMS */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <div className="lg:col-span-2 p-8 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors relative overflow-hidden">
-            <div className="flex justify-between items-end mb-6">
-              <div>
-                <h3 className="text-xl font-serif text-stone-900 dark:text-zinc-100 mb-1 flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-blue-500" /> Haalat (Wellbeing Trend)
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-8 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+             {/* MOOD */}
+             <div className="p-8 rounded-[2.5rem] bg-white dark:bg-zinc-900 border border-stone-100 dark:border-zinc-800 shadow-sm transition-all hover:shadow-md">
+                <h3 className="text-lg font-bold text-stone-800 dark:text-zinc-200 mb-6 flex items-center gap-2">
+                  <Sun className="w-5 h-5 text-amber-400" /> Current Mood
                 </h3>
-                <p className="text-stone-500 dark:text-zinc-400 text-sm">Your emotional state over the last 7 days.</p>
-              </div>
-              <div className="text-right">
-                <span className="text-xs font-bold text-stone-400 dark:text-zinc-500 uppercase tracking-widest">7-Day Avg</span>
-                <p className="text-2xl font-serif text-blue-600 dark:text-blue-400">
-                  {averageMood} <span className="text-sm text-stone-400 dark:text-zinc-500">/5</span>
-                </p>
-              </div>
+                <div className="flex justify-between items-center bg-stone-50 dark:bg-zinc-950 p-4 rounded-3xl">
+                  {[1, 2, 3, 4, 5].map((rating) => (
+                    <button
+                      key={rating}
+                      onClick={() => updateWellnessMetric({ moodToday: rating })}
+                      className={`w-12 h-12 rounded-full font-black transition-all duration-500 ${
+                        wellness.moodToday === rating 
+                        ? 'bg-emerald-500 text-white shadow-lg scale-110' 
+                        : 'text-stone-400 hover:text-stone-600'
+                      }`}
+                    >
+                      {rating}
+                    </button>
+                  ))}
+                </div>
+             </div>
+
+             {/* HYDRATION */}
+             <div className="p-8 rounded-[2.5rem] bg-white dark:bg-zinc-900 border border-stone-100 dark:border-zinc-800 shadow-sm flex items-center justify-between transition-all hover:shadow-md">
+                <div className="space-y-1">
+                  <h3 className="text-lg font-bold text-stone-800 dark:text-zinc-200 flex items-center gap-2">
+                    <Droplets className="w-5 h-5 text-cyan-400" /> Hydration
+                  </h3>
+                  <p className="text-sm text-stone-400 italic">Target: 8 glasses</p>
+                </div>
+                <div className="flex items-center gap-4 bg-stone-50 dark:bg-zinc-950 p-2 rounded-2xl border border-stone-100 dark:border-zinc-800">
+                  <button onClick={() => updateWellnessMetric({ hydration: Math.max(0, wellness.hydration - 1) })} className="w-10 h-10 rounded-xl bg-white dark:bg-zinc-800 shadow-sm flex items-center justify-center"><Minus className="w-4 h-4" /></button>
+                  <span className="text-2xl font-black text-stone-800 dark:text-zinc-100 w-8 text-center">{wellness.hydration}</span>
+                  <button onClick={() => updateWellnessMetric({ hydration: wellness.hydration + 1 })} className="w-10 h-10 rounded-xl bg-cyan-500 text-white shadow-sm flex items-center justify-center"><Plus className="w-4 h-4" /></button>
+                </div>
+             </div>
+          </div>
+
+          {/* CHART */}
+          <div className="p-8 rounded-[3rem] bg-white dark:bg-zinc-900 border border-stone-100 dark:border-zinc-800 shadow-sm relative overflow-hidden transition-colors">
+            <h3 className="text-2xl font-serif text-stone-900 dark:text-zinc-100 mb-1">Wellness Trend</h3>
+            <div className={`flex items-center gap-2 font-bold text-sm ${clinicalTrend.color} mb-6`}>
+              {clinicalTrend.icon && <clinicalTrend.icon className="w-4 h-4" />}
+              {clinicalTrend.label}
             </div>
 
-            <div style={{ width: '100%', height: 260, minHeight: 260 }} className="mt-4">
-              {validPoints.length === 0 ? (
-                <div className="w-full h-full flex items-center justify-center bg-stone-50 dark:bg-zinc-950 rounded-2xl border-2 border-dashed border-stone-200 dark:border-zinc-800 transition-colors">
-                  <p className="text-stone-400 dark:text-zinc-500 text-sm font-medium">Log your mood to see your trend here.</p>
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#52525b" strokeOpacity={0.2} />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#71717a', fontSize: 12, fontWeight: 500 }} dy={10} />
-                    <YAxis domain={[1, 5]} ticks={[1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tick={{ fill: '#71717a', fontSize: 12, fontWeight: 500 }} />
-                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', backgroundColor: '#18181b', color: '#fff', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.3)' }} itemStyle={{ color: '#60a5fa', fontWeight: 'bold' }} />
-                    <Line type="monotone" dataKey="mood" name="Mood Rating" stroke="#3b82f6" strokeWidth={4} dot={{ fill: '#fff', stroke: '#3b82f6', strokeWidth: 3, r: 5 }} activeDot={{ r: 8, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }} connectNulls />
-                  </LineChart>
+            {/* --- FIXED: MEASURED CONTAINER --- */}
+            <div className="w-full mt-4 h-[350px] min-h-[350px] relative">
+              {showChart && !loading && chartData.some(d => d.mood !== null) ? (
+                <ResponsiveContainer width="99%" height="100%" debounce={50}>
+                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorMood" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#27272a" strokeOpacity={0.05} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#a1a1aa', fontSize: 12}} dy={15} />
+                    <YAxis domain={[1, 5]} ticks={[1, 2, 3, 4, 5]} axisLine={false} tickLine={false} tick={{fill: '#a1a1aa', fontSize: 12}} />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '20px', border: 'none', backgroundColor: '#18181b', color: '#fff' }}
+                      itemStyle={{ color: '#10b981', fontWeight: 'bold' }}
+                    />
+                    <Area type="monotone" dataKey="mood" stroke="#10b981" strokeWidth={4} fillOpacity={1} fill="url(#colorMood)" connectNulls animationDuration={1500} />
+                  </AreaChart>
                 </ResponsiveContainer>
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center border-2 border-dashed border-stone-100 dark:border-zinc-800 rounded-[2rem] text-stone-400 space-y-2 italic">
+                  {!showChart ? <RefreshCw className="w-6 h-6 animate-spin opacity-20" /> : <Activity className="w-8 h-8 opacity-20" />}
+                  <p>{!showChart ? "Generating visuals..." : "Log mood history to view your trend."}</p>
+                </div>
               )}
             </div>
           </div>
+        </div>
 
-          {/* AI Symptom Detection Card */}
-          <div className="p-6 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors flex flex-col">
-            <h3 className="text-lg font-serif text-stone-900 dark:text-zinc-100 mb-1 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-rose-500" /> Clinical Patterns
-            </h3>
-            <p className="text-stone-500 dark:text-zinc-400 text-sm mb-6">AI analysis of your recent journal entries and interactions.</p>
-            
-            <div className="flex flex-wrap gap-2 mt-auto">
-              {symptoms.map((sym, i) => (
-                <span key={i} className={`px-3 py-1.5 rounded-xl text-sm font-medium shadow-sm transition-colors border ${sym === 'AI Daily Limit Reached - Come back tomorrow!' ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-900' : 'bg-rose-50 text-rose-700 border-rose-100 dark:bg-rose-950/30 dark:text-rose-400 dark:border-rose-900'}`}>
-                  {sym}
-                </span>
-              ))}
+        {/* SIDEBAR */}
+        <div className="lg:col-span-4 space-y-6">
+          <motion.div 
+            whileTap={{ scale: 0.98 }} 
+            onClick={() => updateWellnessMetric({ goalCompleted: !wellness.goalCompleted })} 
+            className={`p-8 rounded-[2.5rem] cursor-pointer border-2 transition-all duration-500 ${
+              wellness.goalCompleted 
+              ? 'bg-emerald-500 border-emerald-500 text-white shadow-xl shadow-emerald-500/20' 
+              : 'bg-white dark:bg-zinc-900 border-stone-100 dark:border-zinc-800 hover:border-emerald-200'
+            }`}
+          >
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center ${wellness.goalCompleted ? 'bg-white/20' : 'bg-emerald-100 text-emerald-600'}`}>
+                <CheckCircle className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-serif">Daily Intention</h3>
+            </div>
+          </motion.div>
+
+          {/* AI INSIGHTS CARD */}
+          <div className="p-8 rounded-[2.5rem] bg-zinc-900 text-white shadow-2xl relative overflow-hidden border border-white/5 min-h-[300px]">
+             {!hasAIInsights && (
+               <div className="absolute inset-0 z-30 backdrop-blur-md bg-black/40 flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+                 <Lock className="w-8 h-8 text-emerald-400 mb-3" />
+                 <p className="text-sm font-bold text-white mb-4">Unlock AI Clinical Patterns with Pro</p>
+                 <button onClick={() => navigate('/pricing')} className="bg-emerald-600 hover:bg-emerald-700 px-6 py-2 rounded-xl text-xs font-black transition-all">Upgrade Now</button>
+               </div>
+             )}
+             <div className="absolute top-0 right-0 p-4 opacity-5"><Sparkles className="w-20 h-20" /></div>
+             <h3 className="text-xl font-serif mb-6 flex items-center gap-2">
+               <AlertCircle className="w-5 h-5 text-rose-400" /> AI Insights
+             </h3>
+             <div className="space-y-3 relative z-10">
+               {isPatternsLoading ? (
+                  <div className="space-y-3 animate-pulse">
+                    <div className="h-10 bg-white/5 rounded-2xl w-full" />
+                    <div className="h-10 bg-white/5 rounded-2xl w-4/5" />
+                  </div>
+               ) : symptoms.length > 0 ? symptoms.map((s, i) => (
+                 <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} key={i} className="bg-white/5 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/5 text-sm font-medium text-stone-200">
+                   {s}
+                 </motion.div>
+               )) : <p className="text-stone-500 italic text-sm text-center py-4">No patterns captured for this date.</p>}
+             </div>
+          </div>
+
+          {/* ANALYTICS & PDF */}
+          <div className="bg-emerald-50 dark:bg-emerald-950/20 p-8 rounded-[2.5rem] border border-emerald-100 dark:border-emerald-900/30 space-y-6 flex flex-col justify-between">
+            <div>
+              <h4 className="text-xs font-black uppercase tracking-widest text-emerald-700 dark:text-emerald-400 mb-4">Journey Analytics</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-white dark:bg-zinc-900 p-4 rounded-3xl shadow-sm border border-emerald-100/50 text-center">
+                  <span className="text-2xl font-black text-stone-900 dark:text-zinc-100 block">{analytics.chatInteractions}</span>
+                  <span className="text-[10px] text-stone-400 uppercase font-bold">Sessions</span>
+                </div>
+                <div className="bg-white dark:bg-zinc-900 p-4 rounded-3xl shadow-sm border border-emerald-100/50 text-center">
+                  <span className="text-2xl font-black text-stone-900 dark:text-zinc-100 block">{analytics.journal}</span>
+                  <span className="text-[10px] text-stone-400 uppercase font-bold">Entries</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <AnimatePresence>
+                {pdfError && (
+                  <motion.div initial={{ opacity: 0, height: 0, y: 10 }} animate={{ opacity: 1, height: 'auto', y: 0 }} exit={{ opacity: 0, height: 0, y: -10 }} className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 p-3 rounded-xl text-xs font-medium mb-4 flex items-start gap-2 overflow-hidden">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <p>{pdfError}</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <button onClick={handleDownloadPDF} disabled={isGeneratingPDF} className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 font-bold transition-all ${hasPDFReports ? 'bg-white dark:bg-zinc-800 text-emerald-600 border border-emerald-200 hover:shadow-lg scale-[1.02]' : 'bg-stone-200/50 dark:bg-zinc-900 text-stone-400 border border-stone-200 dark:border-zinc-800'}`}>
+                {isGeneratingPDF ? <RefreshCw className="w-5 h-5 animate-spin" /> : hasPDFReports ? <Download className="w-5 h-5" /> : <Lock className="w-4 h-4 opacity-50" />}
+                <span className="text-sm">{isGeneratingPDF ? "Analyzing..." : "Clinical PDF Report"}</span>
+                {!hasPDFReports && <Crown className="w-3.5 h-3.5 text-amber-500/60" />}
+              </button>
             </div>
           </div>
         </div>
-
-        {/* ROW 3: JOURNEY ANALYTICS */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="p-8 rounded-3xl border border-stone-100 dark:border-zinc-800 shadow-sm bg-white dark:bg-zinc-900 transition-colors relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-8 opacity-5 dark:opacity-10 pointer-events-none">
-              <BarChart3 className="w-32 h-32 text-emerald-900 dark:text-emerald-500" />
-            </div>
-            <h3 className="text-xl font-serif text-stone-900 dark:text-zinc-100 mb-1 relative z-10">Therapeutic Progress</h3>
-            <p className="text-stone-500 dark:text-zinc-400 text-sm mb-8 relative z-10">Modules and exercises completed over time.</p>
-            
-            <div className="space-y-6 relative z-10">
-              {/* CBT BAR */}
-              <div>
-                <div className="flex justify-between items-end mb-2">
-                  <span className="text-sm font-bold text-blue-800 dark:text-blue-400 flex items-center gap-2"><Brain className="w-4 h-4"/> CBT</span>
-                  <span className="text-xs font-medium text-stone-500 dark:text-zinc-500">{analytics.cbt} completed</span>
-                </div>
-                <div className="h-3 w-full bg-blue-50 dark:bg-blue-950/30 rounded-full overflow-hidden">
-                  <motion.div initial={{ width: 0 }} animate={{ width: `${(analytics.cbt / maxModule) * 100}%` }} transition={{ duration: 1, ease: "easeOut" }} className="h-full bg-blue-500 rounded-full" />
-                </div>
-              </div>
-              
-              {/* DBT BAR */}
-              <div>
-                <div className="flex justify-between items-end mb-2">
-                  <span className="text-sm font-bold text-purple-800 dark:text-purple-400 flex items-center gap-2"><Users className="w-4 h-4"/> DBT</span>
-                  <span className="text-xs font-medium text-stone-500 dark:text-zinc-500">{analytics.dbt} completed</span>
-                </div>
-                <div className="h-3 w-full bg-purple-50 dark:bg-purple-950/30 rounded-full overflow-hidden">
-                  <motion.div initial={{ width: 0 }} animate={{ width: `${(analytics.dbt / maxModule) * 100}%` }} transition={{ duration: 1, delay: 0.2, ease: "easeOut" }} className="h-full bg-purple-500 rounded-full" />
-                </div>
-              </div>
-              
-              {/* ACT BAR */}
-              <div>
-                <div className="flex justify-between items-end mb-2">
-                  <span className="text-sm font-bold text-emerald-800 dark:text-emerald-400 flex items-center gap-2"><Leaf className="w-4 h-4"/> ACT</span>
-                  <span className="text-xs font-medium text-stone-500 dark:text-zinc-500">{analytics.act} completed</span>
-                </div>
-                <div className="h-3 w-full bg-emerald-50 dark:bg-emerald-950/30 rounded-full overflow-hidden">
-                  <motion.div initial={{ width: 0 }} animate={{ width: `${(analytics.act / maxModule) * 100}%` }} transition={{ duration: 1, delay: 0.4, ease: "easeOut" }} className="h-full bg-emerald-500 rounded-full" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-rows-2 gap-6">
-            <div className="p-6 rounded-3xl border border-stone-800 dark:border-zinc-800 shadow-sm bg-gradient-to-br from-stone-800 to-stone-900 dark:from-zinc-800 dark:to-zinc-900 text-white flex items-center justify-between transition-colors">
-              <div>
-                <p className="text-stone-400 dark:text-zinc-400 text-sm font-medium mb-1 uppercase tracking-widest">Journal Entries</p>
-                <h3 className="text-4xl font-serif">{analytics.journal}</h3>
-                <p className="text-stone-400 dark:text-zinc-500 text-xs mt-2">Reflections captured</p>
-              </div>
-              <div className="w-16 h-16 rounded-2xl bg-stone-700/50 dark:bg-zinc-700/50 flex items-center justify-center border border-stone-600 dark:border-zinc-600">
-                <BookOpen className="w-8 h-8 text-stone-300 dark:text-zinc-300" />
-              </div>
-            </div>
-
-            <div className="p-6 rounded-3xl border border-teal-200 dark:border-teal-900/50 shadow-sm bg-gradient-to-br from-teal-50 to-teal-100 dark:from-teal-950/20 dark:to-teal-900/30 flex items-center justify-between transition-colors">
-              <div>
-                <p className="text-teal-700 dark:text-teal-400 text-sm font-medium mb-1 uppercase tracking-widest">SoulSpark AI</p>
-                <h3 className="text-4xl font-serif text-teal-900 dark:text-teal-100">{analytics.chatInteractions}</h3>
-                <p className="text-teal-600 dark:text-teal-500 text-xs mt-2">Therapy sessions completed</p>
-              </div>
-              <div className="w-16 h-16 rounded-2xl bg-white dark:bg-zinc-900 flex items-center justify-center shadow-sm border border-teal-200 dark:border-teal-900/50 transition-colors">
-                <MessageSquare className="w-8 h-8 text-teal-600 dark:text-teal-500" />
-              </div>
-            </div>
-          </div>
-        </div>
-
       </div>
     </div>
   );
