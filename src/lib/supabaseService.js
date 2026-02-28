@@ -1,5 +1,26 @@
 import { supabase } from './supabaseClient'; 
 
+// ====================================================
+// AUTHENTICATION (FIXED FOR VERCEL)
+// ====================================================
+export const signInWithGoogle = async () => {
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      // This dynamically grabs your current URL (localhost or Vercel!)
+      redirectTo: `${window.location.origin}/dashboard` 
+    }
+  });
+  
+  if (error) {
+    console.error("Authentication Error:", error.message);
+  }
+  return { data, error };
+};
+
+// ====================================================
+// CLINICAL SERVICE CONFIG
+// ====================================================
 const aiApiKey = import.meta.env.VITE_AI_API_KEY;
 const AI_MODEL = "google/gemini-2.5-flash"; 
 const MAX_CONTEXT_MESSAGES = 10; 
@@ -110,7 +131,6 @@ You MUST respond ONLY in raw JSON format:
       const combinedText = [...(chats?.map(c => c.text) || []), ...(journals?.map(j => j.content) || [])].join(' ');
       if (!combinedText.trim()) return ["No logs for this date yet."];
 
-      // CORRECTED URL: Changed "completify" to "completions"
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": `Bearer ${aiApiKey}`, "Content-Type": "application/json" },
