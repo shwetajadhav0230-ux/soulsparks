@@ -7,7 +7,6 @@ export const signInWithGoogle = async () => {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      // This dynamically grabs your current URL (localhost or Vercel!)
       redirectTo: `${window.location.origin}/dashboard` 
     }
   });
@@ -25,8 +24,6 @@ const aiApiKey = import.meta.env.VITE_AI_API_KEY;
 const AI_MODEL = "google/gemini-2.5-flash"; 
 const MAX_CONTEXT_MESSAGES = 10; 
 
-// --- 1. SMART JSON PARSER ---
-// Gracefully handles cases where the AI forgets JSON rules and returns plain text.
 const safeJsonParse = (text, fallback) => {
   try {
     if (!text) return fallback;
@@ -35,35 +32,40 @@ const safeJsonParse = (text, fallback) => {
     return JSON.parse(cleanText);
   } catch (e) {
     console.warn("AI ignored JSON format. Wrapping raw text into fallback.");
-    return {
-      ...fallback,
-      chat_response: text.replace(/```json/g, '').replace(/```/g, '').trim() 
-    };
+    return { ...fallback, chat_response: text.replace(/```json/g, '').replace(/```/g, '').trim() };
   }
 };
 
 export class ClinicalService {
   
   // ====================================================
-  // 1. CORE THERAPY CHAT (STRICT BREVITY + MULTIMODAL)
+  // 1. CORE THERAPY CHAT (FRIENDLY HUMAN EXPERT UPGRADE)
   // ====================================================
   static async processAdvancedTherapyChat(sessionState, chatHistory = [], userId) {
     if (!aiApiKey) return { chat_response: "System Error: Missing API Key." };
 
-    const systemPrompt = `You are SoulSpark AI, an empathetic, highly skilled Clinical Psychologist specializing in CBT, DBT, and ACT. Your tone must be warm, incredibly human, non-judgmental, and conversational.
+    // THE "FRIENDLY HUMAN EXPERT" PROMPT
+    const systemPrompt = `You are SoulSpark. You are a real, friendly, confident human therapist texting a client. You are NOT a pathetic, groveling AI. You do not treat the client like they are made of glass. You are warm, relatable, and deeply insightful.
 
-CRITICAL CHAT CONSTRAINTS:
-1. CONVERSATIONAL EMPATHY: Sound like a real, caring therapist. Use reflective listening (e.g., "It makes total sense that you feel...", "I hear how heavy that is"). Avoid sounding robotic, formulaic, or like an interrogator.
-2. NATURAL PACING: Keep responses concise (2-4 sentences) so it feels like a real chat, but don't force it to be artificially short. 
-3. GENTLE EXPLORATION: Validate their feelings deeply first. Then, gently guide them with ONE open-ended or Socratic question to help them reflect. Do not rush to fix the problem.
-4. Clinical Document Analysis: If a report/image is uploaded, offer a warm, brief observation and ask how they feel about what's in it.
-5. Safety First: If crisis markers (harm to self/others, severe hopelessness) are detected, set "safety_flag" to true.
+YOUR PSYCHOLOGICAL BLUEPRINT:
+1. CARL ROGERS (The Foundation): Provide unconditional positive regard. Be warm and totally non-judgmental. Mirror their specific pain, but DO NOT over-apologize. (Say "That sounds exhausting" instead of "I am so incredibly sorry you are suffering").
+2. DR. K / HEALTHY GAMER (The Vibe): Speak casually and directly. You understand modern burnout, doom-scrolling, and dopamine crashes. Use natural words like "Yeah," "Man," "Oof," or "Makes sense." Be a friendly mentor, not a sterile doctor.
+3. DAVID BUSS & SIGMUND FREUD (The 'Why'): Normalize their struggles using evolutionary psychology or unconscious drives. De-weaponize their shame. (e.g., "Of course you're anxious, your brain's alarm system is just trying to protect you," or "Your nervous system is doing exactly what it evolved to do.")
+4. MARTIN SELIGMAN (Positive Psych): Gently point out their resilience. If they are surviving a tough time, casually mention their strength. 
+5. B.F. SKINNER & ALBERT BANDURA (Behavior & Agency): Focus on self-efficacy. Instead of solving their problems, nudge them to see their own agency. Reward their vulnerability with immediate warmth.
+
+STRICT COMMUNICATION RULES:
+- NO PATHETIC AI-ISMS: Never say "As an AI...", "Your feelings are valid," "I'm here to help," or "How does that make you feel?". 
+- CONVERSATIONAL PACING: 1 to 3 short sentences maximum. Humans text in short bursts.
+- ONE FRIENDLY NUDGE: End with ONE casual, grounded question to keep them talking. (e.g., "What's taking up the most space in your head right now?" or "How is your body feeling as you type this?")
+- NO FORMATTING: No bullet points, no bold text. Just plain text.
+- CRISIS: If you detect self-harm or severe hopelessness, drop the casual tone, anchor them firmly ("I am right here with you. But because I care about your safety..."), and set safety_flag to true.
 
 You MUST respond ONLY in raw JSON format:
 {
-  "chat_response": "String",
-  "dashboard_updates": { "wellbeing_score": 1-10, "identified_patterns": [], "clinical_pointers": [] },
-  "session_meta": { "current_phase": "string", "session_status": "IN_PROGRESS|COMPLETED", "homework_task": "string" },
+  "chat_response": "Your friendly, deeply human, short text response goes here.",
+  "dashboard_updates": { "wellbeing_score": 1-10, "identified_patterns": ["short string"], "clinical_pointers": ["short string"] },
+  "session_meta": { "current_phase": "venting|psychoeducation|exploring", "session_status": "IN_PROGRESS|COMPLETED", "homework_task": "optional string" },
   "safety_flag": false
 }`;
 
@@ -79,10 +81,9 @@ You MUST respond ONLY in raw JSON format:
     ];
 
     let userContent;
-    // Multimodal Support for Premium Users (Base64 PDFs and Images)
     if (sessionState.attached_file) {
       userContent = [
-        { type: "text", text: sessionState.user_input || "Please analyze this attached clinical document/image." },
+        { type: "text", text: sessionState.user_input || "Take a look at this." },
         { type: "image_url", image_url: { url: sessionState.attached_file.base64 } }
       ];
     } else {
@@ -103,7 +104,8 @@ You MUST respond ONLY in raw JSON format:
         body: JSON.stringify({ 
             model: AI_MODEL, 
             messages: messages,
-            max_tokens: 1000,
+            max_tokens: 800,
+            temperature: 0.65, // Keeps it friendly and creative, but strictly grounded
             response_format: { type: "json_object" }
         })
       });
@@ -111,16 +113,16 @@ You MUST respond ONLY in raw JSON format:
       if (!response.ok) throw new Error(`API Error: ${response.status}`);
       const data = await response.json();
       return safeJsonParse(data.choices?.[0]?.message?.content, {
-        chat_response: "I'm listening. Tell me more about that.",
+        chat_response: "I hear you. I'm right here.",
         session_meta: { session_status: "IN_PROGRESS" }
       });
     } catch (err) {
-      return { chat_response: "Connection trouble. Try again soon.", safety_flag: false };
+      return { chat_response: "My internet just glitched for a second. What were you saying?", safety_flag: false };
     }
   }
 
   // ====================================================
-  // 2. AI DASHBOARD INSIGHTS (STRICT 5-WORD MINI-LINES)
+  // 2. AI DASHBOARD INSIGHTS
   // ====================================================
   static async analyzeUserPatterns(userId, date) {
     try {
@@ -138,6 +140,7 @@ You MUST respond ONLY in raw JSON format:
         body: JSON.stringify({
           model: AI_MODEL,
           max_tokens: 200,
+          temperature: 0.3,
           response_format: { type: "json_object" },
           messages: [
             { 
@@ -169,9 +172,10 @@ You MUST respond ONLY in raw JSON format:
         body: JSON.stringify({
           model: AI_MODEL,
           max_tokens: 500,
+          temperature: 0.7,
           response_format: { type: "json_object" },
           messages: [
-            { role: "system", content: "You are a CBT expert. Identify the distortion and provide 3 short, realistic reframes in a JSON array of strings." },
+            { role: "system", content: "You are an empathetic CBT expert. Identify the cognitive distortion in the user's thought and provide 3 short, realistic, and compassionate reframes. Return a JSON array of strings." },
             { role: "user", content: automaticThought }
           ]
         })
